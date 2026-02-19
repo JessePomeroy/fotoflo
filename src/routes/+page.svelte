@@ -900,7 +900,9 @@
     align-items: center;
     gap: 16px;
     padding: 16px 20px;
-    background: rgba(93, 123, 140, 0.1);
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(93, 123, 140, 0.2);
     border-radius: 12px;
     cursor: pointer;
@@ -909,8 +911,10 @@
   }
 
   .import-choice:hover {
-    background: rgba(93, 123, 140, 0.2);
+    background: rgba(255, 255, 255, 0.8);
     border-color: rgba(93, 123, 140, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   }
 
   .import-choice .icon {
