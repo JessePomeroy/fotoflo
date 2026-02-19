@@ -13,43 +13,7 @@
  */
 import { browser } from '$app/environment';
 import { writeEXIF } from '$lib/utils/exif';
-
-interface Photo {
-  id: string;
-  fileName: string;
-  filePath: string;
-  fileSize?: number;
-  dateTaken: string;
-  importedAt: string;
-  rating: number;
-  isFavorite: boolean;
-  tags: string[];
-  filmStock?: string;
-  camera?: string;
-  subject?: string;
-  frameNumber?: string;
-  // EXIF data
-  iso?: number;
-  aperture?: number;
-  shutterSpeed?: string;
-  lens?: string;
-  flash?: boolean;
-  whiteBalance?: string;
-}
-
-interface FotoFloState {
-  photos: Photo[];
-  collections: Collection[];
-  selectedIds: Set<string>;
-  activeView: 'all' | 'favorites' | 'collection';
-  activeCollectionId: string | null;
-  searchQuery: string;
-  sortBy: 'date' | 'rating' | 'name';
-  filterFilmStock: string | null;
-  filterCamera: string | null;
-  filterRating: number | null;
-  filterSubject: string | null;
-}
+import type { Photo, Collection, FotoFloState } from '$lib/types';
 
 /**
  * Creates the FotoFlo store with reactive state
@@ -137,6 +101,21 @@ function createFotoFloStore() {
   // ==================== THUMBNAIL STORAGE ====================
   
   /**
+   * Helper: Convert data URL to Blob (sync, no fetch needed)
+   */
+  function dataUrlToBlob(dataUrl: string): Blob {
+    const [header, base64] = dataUrl.split(',');
+    const mimeMatch = header.match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const binary = atob(base64);
+    const array = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      array[i] = binary.charCodeAt(i);
+    }
+    return new Blob([array], { type: mime });
+  }
+
+  /**
    * Save thumbnail - tries Cache API first, falls back to IndexedDB
    */
   async function saveThumbnail(id: string, dataUrl: string) {
@@ -145,13 +124,14 @@ function createFotoFloStore() {
     if (hasCacheAPI()) {
       try {
         const cache = await caches.open(CACHE_NAME);
-        const response = await fetch(dataUrl);
-        const blob = await response.blob();
+        const blob = dataUrlToBlob(dataUrl);
         await cache.put(`/thumbnails/${id}`, new Response(blob, {
           headers: { 'Content-Type': blob.type }
         }));
         return;
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        console.error('Cache API save error:', e);
+      }
     }
     
     if (!db) await initDB();
@@ -344,7 +324,7 @@ function createFotoFloStore() {
   }
 
   // Actions
-  async function importPhotos(photoFiles: Array<{id: string; fileName: string; filePath: string; dateTaken: string; fileSize?: number; file: File; handle?: FileSystemFileHandle; iso?: number; aperture?: number; shutterSpeed?: string; lens?: string; flash?: boolean; whiteBalance?: string;}>) {
+  async function importPhotos(photoFiles: Photo[]) {
     const newPhotos = photoFiles.map(pf => ({
       id: pf.id,
       fileName: pf.fileName,
@@ -367,35 +347,89 @@ function createFotoFloStore() {
     
     // Store file handles for full-res export
     for (const pf of photoFiles) {
-      if (pf.handle) {
-        await saveFileHandle(pf.id, pf.handle);
+      if ((pf as any).handle) {
+        await saveFileHandle(pf.id, (pf as any).handle);
       }
     }
   }
 
+  let worker: Worker | null = null;
+
   /**
-   * Generate a compressed thumbnail for a photo
+   * Get or create thumbnail worker
+   */
+  function getWorker(): Worker {
+    if (!worker && browser) {
+      worker = new Worker(new URL('$lib/workers/thumbnail.worker.ts', import.meta.url), {
+        type: 'module'
+      });
+    }
+    return worker!;
+  }
+
+  /**
+   * Generate a compressed thumbnail for a photo (uses Web Worker for performance)
    */
   async function generateThumbnail(id: string, file: File): Promise<void> {
     if (!browser || !file || !(file instanceof File)) return;
     
     try {
-      const bitmap = await createImageBitmap(file);
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const arrayBuffer = await file.arrayBuffer();
+      const worker = getWorker();
       
-      const maxSize = 300;
-      const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
-      canvas.width = Math.floor(bitmap.width * scale);
-      canvas.height = Math.floor(bitmap.height * scale);
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close();
-      
-      await saveThumbnail(id, canvas.toDataURL('image/jpeg', 0.7));
+      // Create a promise that resolves when the worker responds
+      await new Promise<void>((resolve, reject) => {
+        const handler = (event: MessageEvent) => {
+          if (event.data.id === id) {
+            worker.removeEventListener('message', handler);
+            if (event.data.success) {
+              saveThumbnail(id, event.data.dataUrl);
+              resolve();
+            } else {
+              reject(new Error(event.data.error));
+            }
+          }
+        };
+        
+        worker.addEventListener('message', handler);
+        worker.postMessage({
+          id,
+          fileData: arrayBuffer,
+          fileType: file.type,
+          maxSize: 300,
+          quality: 0.7
+        });
+        
+        // Timeout after 30 seconds
+        setTimeout(() => {
+          worker.removeEventListener('message', handler);
+          reject(new Error('Thumbnail generation timeout'));
+        }, 30000);
+      });
     } catch (err) {
-      // Silently fail - thumbnail not critical
+      // Fallback to main thread generation
+      console.warn('Worker failed, falling back to main thread:', err);
+      await generateThumbnailMainThread(id, file);
     }
+  }
+
+  /**
+   * Fallback: main thread thumbnail generation
+   */
+  async function generateThumbnailMainThread(id: string, file: File): Promise<void> {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const maxSize = 300;
+    const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
+    canvas.width = Math.floor(bitmap.width * scale);
+    canvas.height = Math.floor(bitmap.height * scale);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    
+    await saveThumbnail(id, canvas.toDataURL('image/jpeg', 0.7));
   }
 
   function setRating(id: string, rating: number) {

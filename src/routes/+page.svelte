@@ -21,8 +21,9 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Viewer from '$lib/components/Viewer.svelte';
   import { fotoflo } from '$lib/stores/fotoflo.svelte';
-  import type { Photo } from '$lib/stores/fotoflo.svelte';
+  import type { Photo } from '$lib/types';
   import { readEXIF } from '$lib/utils/exif';
+  import { importFromFiles as importFilesApi, importFromFolder as importFolderApi, getExistingFileKeys } from '$lib/import';
 
   let NeoDialog: any = $state(null);
 
@@ -42,7 +43,8 @@
     showImportModal: false,
     showExportModal: false,
     viewerPhoto: null as Photo | null,
-    mobileFilter: 'all' as 'all' | 'favorites' | string
+    mobileFilter: 'all' as 'all' | 'favorites' | string,
+    importing: false
   });
 
   // Bulk metadata state
@@ -69,12 +71,34 @@
   });
 
   async function loadAllThumbnails() {
+    // Progressive loading - show first 12 immediately, load rest in background
+    const BATCH_SIZE = 12;
+    
+    // Load first batch synchronously for quick display
     const urls: Record<string, string> = {};
-    for (const photo of photos) {
+    const remaining: string[] = [];
+    
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i];
       const url = await fotoflo.getThumbnail(photo.id);
-      if (url) urls[photo.id] = url;
+      if (url) {
+        urls[photo.id] = url;
+      } else if (i >= BATCH_SIZE) {
+        remaining.push(photo.id);
+      }
     }
+    
     thumbnailUrls = urls;
+    
+    // Load remaining thumbnails in background
+    if (remaining.length > 0) {
+      Promise.all(remaining.map(async (id) => {
+        const url = await fotoflo.getThumbnail(id);
+        if (url) {
+          thumbnailUrls[id] = url;
+        }
+      }));
+    }
   }
 
   async function updateFromStore() {
@@ -148,156 +172,50 @@
   }
 
   async function processFiles(files: FileList) {
-    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; iso?: number; aperture?: number; shutterSpeed?: string; lens?: string; flash?: boolean; whiteBalance?: string; }[] = [];
-    const existingFiles = new Set(
-      fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
-    );
-    
-    for (const file of Array.from(files)) {
-      if (!file.type.match(/^image\/(jpeg|png|gif|webp|tiff?)$/i)) continue;
+    ui.importing = true;
+    try {
+      const existingKeys = getExistingFileKeys(fotoflo.state.photos);
+      const newPhotos = await importFilesApi(files, existingKeys);
       
-      const key = `${file.name.toLowerCase()}-${file.size}`;
-      if (existingFiles.has(key)) continue;
-      
-      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
-      
-      // Read EXIF data
-      let iso: number | undefined;
-      let aperture: number | undefined;
-      let shutterSpeed: string | undefined;
-      let lens: string | undefined;
-      let flash: boolean | undefined;
-      let whiteBalance: string | undefined;
-      
-      try {
-        const exif = await readEXIF(file);
-        if (exif?.dateTaken) dateTaken = exif.dateTaken;
-        if (exif?.camera) fotoflo.setCamera(exif.camera);
-        iso = exif?.iso;
-        aperture = exif?.aperture;
-        shutterSpeed = exif?.shutterSpeed;
-        lens = exif?.lens;
-        flash = exif?.flash;
-        whiteBalance = exif?.whiteBalance;
-      } catch (e) {
-        console.warn('EXIF read failed:', e);
+      if (newPhotos.length > 0) {
+        fotoflo.importPhotos(newPhotos);
+        await Promise.all(newPhotos.map(p => fotoflo.generateThumbnail(p.id, p.file)));
+        await updateFromStore();
+        await loadAllThumbnails();
+        
+        if (newPhotos.length >= 5) {
+          bulk.metaIds = newPhotos.map(p => p.id);
+          ui.showBulkMetaModal = true;
+        }
       }
-      
-      newPhotos.push({
-        id,
-        fileName: file.name,
-        filePath: file.name,
-        fileSize: file.size,
-        dateTaken,
-        file,
-        iso,
-        aperture,
-        shutterSpeed,
-        lens,
-        flash,
-        whiteBalance
-      });
-      existingFiles.add(key);
-    }
-    
-    if (newPhotos.length > 0) {
-      fotoflo.importPhotos(newPhotos);
-      for (const photo of newPhotos) {
-        await fotoflo.generateThumbnail(photo.id, photo.file);
-      }
-      await updateFromStore();
-      await loadAllThumbnails();
-      
-      if (newPhotos.length >= 5) {
-        bulk.metaIds = newPhotos.map(p => p.id);
-        ui.showBulkMetaModal = true;
-      }
+    } finally {
+      ui.importing = false;
     }
   }
 
   async function importFromFolder(dirHandle: any) {
-    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; handle: FileSystemFileHandle }[] = [];
+    ui.importing = true;
+    try {
+      const existingKeys = getExistingFileKeys(fotoflo.state.photos);
+      const { photos, skipped } = await importFolderApi(dirHandle, existingKeys);
       
-    // Get existing files by name+size combo for better duplicate detection
-    const existingFiles = new Set(
-      fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
-    );
-    let skippedCount = 0;
-
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file' && entry.name.match(/\.(jpg|jpeg|png|gif|webp|tiff?)$/i)) {
-        const file = await entry.getFile();
+      if (photos.length > 0) {
+        fotoflo.importPhotos(photos);
+        await Promise.all(photos.map(p => fotoflo.generateThumbnail(p.id, p.file)));
+        await updateFromStore();
+        await loadAllThumbnails();
         
-        // Check for duplicate by filename + file size
-        const key = `${entry.name.toLowerCase()}-${file.size}`;
-        if (existingFiles.has(key)) {
-          skippedCount++;
-          continue;
+        if (photos.length >= 5) {
+          bulk.metaIds = photos.map(p => p.id);
+          ui.showBulkMetaModal = true;
         }
-        
-        const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        
-        let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
-        
-        // Read EXIF data
-        let iso: number | undefined;
-        let aperture: number | undefined;
-        let shutterSpeed: string | undefined;
-        let lens: string | undefined;
-        let flash: boolean | undefined;
-        let whiteBalance: string | undefined;
-        
-        try {
-          const exif = await readEXIF(file);
-          if (exif?.dateTaken) dateTaken = exif.dateTaken;
-          if (exif?.camera) fotoflo.setCamera(exif.camera); // Auto-learn camera
-          iso = exif?.iso;
-          aperture = exif?.aperture;
-          shutterSpeed = exif?.shutterSpeed;
-          lens = exif?.lens;
-          flash = exif?.flash;
-          whiteBalance = exif?.whiteBalance;
-        } catch (e) {
-          console.warn('EXIF read failed:', e);
-        }
-
-        newPhotos.push({
-          id,
-          fileName: entry.name,
-          filePath: entry.name,
-          fileSize: file.size,
-          dateTaken,
-          file,
-          handle: entry as FileSystemFileHandle,
-          iso,
-          aperture,
-          shutterSpeed,
-          lens,
-          flash,
-          whiteBalance
-        });
-        
-        existingFiles.add(key);
       }
-    }
-
-    if (newPhotos.length > 0) {
-      fotoflo.importPhotos(newPhotos);
-      for (const photo of newPhotos) {
-        await fotoflo.generateThumbnail(photo.id, photo.file);
+      
+      if (skipped > 0) {
+        alert(`imported ${photos.length} photos (skipped ${skipped} duplicates)`);
       }
-      await updateFromStore();
-      await loadAllThumbnails();
-
-      if (newPhotos.length >= 5) {
-        bulk.metaIds = newPhotos.map(p => p.id);
-        ui.showBulkMetaModal = true;
-      }
-    }
-    
-    if (skippedCount > 0) {
-      alert(`imported ${newPhotos.length} photos (skipped ${skippedCount} duplicates)`);
+    } finally {
+      ui.importing = false;
     }
   }
 
@@ -317,46 +235,18 @@
       const files = (e.target as HTMLInputElement).files;
       if (!files || files.length === 0) return;
       
-      const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; handle?: FileSystemFileHandle }[] = [];
-      const existingFiles = new Set(
-        fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
-      );
-      
-      for (const file of Array.from(files)) {
-        if (!file.type.match(/^image\/(jpeg|png|gif|webp|tiff?)$/i)) continue;
-        
-        const key = `${file.name.toLowerCase()}-${file.size}`;
-        if (existingFiles.has(key)) continue;
-        
-        const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
-        
-        newPhotos.push({
-          id,
-          fileName: file.name,
-          filePath: file.name,
-          fileSize: file.size,
-          dateTaken,
-          file
-        });
-        existingFiles.add(key);
-      }
+      const existingKeys = getExistingFileKeys(fotoflo.state.photos);
+      const newPhotos = await importFilesApi(files, existingKeys);
       
       if (newPhotos.length > 0) {
         fotoflo.importPhotos(newPhotos);
-        for (const photo of newPhotos) {
-          await fotoflo.generateThumbnail(photo.id, photo.file);
-        }
+        await Promise.all(newPhotos.map(p => fotoflo.generateThumbnail(p.id, p.file)));
         await updateFromStore();
         await loadAllThumbnails();
         
         if (newPhotos.length >= 5) {
           bulk.metaIds = newPhotos.map(p => p.id);
           ui.showBulkMetaModal = true;
-        }
-        
-        if (newPhotos.length < files.length) {
-          alert(`imported ${newPhotos.length} photos`);
         }
       }
     };
@@ -702,6 +592,15 @@
     </NeoDialog>
   {/if}
 
+  {#if ui.mounted && NeoDialog && ui.importing}
+    <NeoDialog open={ui.importing} blur={40} elevation={20} style="border-radius: 24px; border: none;">
+      <div class="modal-content loading-modal">
+        <div class="spinner"></div>
+        <p>importing photos...</p>
+      </div>
+    </NeoDialog>
+  {/if}
+
   {#if ui.mounted && NeoDialog && ui.showExportModal}
     <NeoDialog open={ui.showExportModal} onclose={() => ui.showExportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
       <div class="modal-content">
@@ -725,7 +624,7 @@
 
   {#if ui.mounted && NeoDialog && ui.showBulkMetaModal}
     <NeoDialog open={ui.showBulkMetaModal} onclose={() => ui.showBulkMetaModal = false} blur={40} elevation={20} style="border-radius: 16px; border: none;">
-      <div class="modal-content compact">
+      <div class="modal-content compact" onkeydown={(e) => e.key === 'Enter' && applyBulkMetadata()}>
         <h2>add metadata to {bulk.metaIds.length} photos</h2>
 
         <div class="field">
@@ -1281,5 +1180,29 @@
     input, select {
       min-height: 44px;
     }
+  }
+
+  .modal-content.loading-modal {
+    text-align: center;
+    padding: 2rem 3rem;
+  }
+
+  .modal-content.loading-modal p {
+    margin-top: 1rem;
+    color: #666;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #e0e0e0;
+    border-top-color: #2E7D32;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>
