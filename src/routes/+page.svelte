@@ -69,19 +69,12 @@
   });
 
   async function loadAllThumbnails() {
-    console.log('Loading thumbnails for', photos.length, 'photos');
     const urls: Record<string, string> = {};
     for (const photo of photos) {
       const url = await fotoflo.getThumbnail(photo.id);
-      if (url) {
-        console.log('Got thumbnail for:', photo.id);
-        urls[photo.id] = url;
-      } else {
-        console.log('No thumbnail for:', photo.id);
-      }
+      if (url) urls[photo.id] = url;
     }
     thumbnailUrls = urls;
-    console.log('Total thumbnails loaded:', Object.keys(urls).length);
   }
 
   async function updateFromStore() {

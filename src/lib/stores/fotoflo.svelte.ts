@@ -142,44 +142,27 @@ function createFotoFloStore() {
   async function saveThumbnail(id: string, dataUrl: string) {
     if (!browser) return;
     
-    // Try Cache API first (faster, better for blobs)
     if (hasCacheAPI()) {
       try {
         const cache = await caches.open(CACHE_NAME);
-        // Convert data URL to blob for efficient storage
         const response = await fetch(dataUrl);
         const blob = await response.blob();
-        // Store as a fake URL that we can retrieve later
-        const url = `/thumbnails/${id}`;
-        await cache.put(url, new Response(blob, {
+        await cache.put(`/thumbnails/${id}`, new Response(blob, {
           headers: { 'Content-Type': blob.type }
         }));
-        console.log('Thumbnail saved (Cache API):', id, 'size:', blob.size);
         return;
-      } catch (e) {
-        console.warn('Cache API save failed, falling back to IndexedDB:', e);
-      }
+      } catch (e) { /* fall through */ }
     }
     
-    // Fallback to IndexedDB
     if (!db) await initDB();
-    if (!db) {
-      console.warn('Cannot save thumbnail - no storage available');
-      return;
-    }
+    if (!db) return;
     
     return new Promise<void>((resolve) => {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readwrite');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.put({ id, data: dataUrl });
-      request.onsuccess = () => {
-        console.log('Thumbnail saved (IndexedDB):', id, 'length:', dataUrl?.length);
-        resolve();
-      };
-      request.onerror = () => {
-        console.warn('IndexedDB save failed:', id);
-        resolve();
-      };
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
     });
   }
 
@@ -189,24 +172,17 @@ function createFotoFloStore() {
   async function getThumbnail(id: string): Promise<string | null> {
     if (!browser) return null;
     
-    // Try Cache API first
     if (hasCacheAPI()) {
       try {
         const cache = await caches.open(CACHE_NAME);
-        const url = `/thumbnails/${id}`;
-        const response = await cache.match(url);
+        const response = await cache.match(`/thumbnails/${id}`);
         if (response) {
           const blob = await response.blob();
-          const dataUrl = await blobToDataUrl(blob);
-          console.log('Thumbnail retrieved (Cache API):', id, 'size:', blob.size);
-          return dataUrl;
+          return await blobToDataUrl(blob);
         }
-      } catch (e) {
-        console.warn('Cache API get failed, trying IndexedDB:', e);
-      }
+      } catch (e) { /* fall through */ }
     }
     
-    // Fallback to IndexedDB
     if (!db) await initDB();
     if (!db) return null;
     
@@ -214,17 +190,8 @@ function createFotoFloStore() {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readonly');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.get(id);
-      request.onsuccess = () => {
-        const result = request.result?.data || null;
-        if (result) {
-          console.log('Thumbnail retrieved (IndexedDB):', id, 'length:', result?.length);
-        }
-        resolve(result);
-      };
-      request.onerror = () => {
-        console.warn('IndexedDB get failed:', id);
-        resolve(null);
-      };
+      request.onsuccess = () => resolve(request.result?.data || null);
+      request.onerror = () => resolve(null);
     });
   }
 
@@ -239,13 +206,12 @@ function createFotoFloStore() {
       try {
         const cache = await caches.open(CACHE_NAME);
         await Promise.all(ids.map(id => cache.delete(`/thumbnails/${id}`)));
-        console.log('Thumbnails deleted from Cache API:', ids.length);
       } catch (e) {
-        console.warn('Cache API delete failed:', e);
+        // Ignore errors
       }
     }
     
-    // Also delete from IndexedDB (in case they were stored there)
+    // Also delete from IndexedDB
     if (!db) await initDB();
     if (!db) return;
     
@@ -253,10 +219,7 @@ function createFotoFloStore() {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readwrite');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       ids.forEach(id => store.delete(id));
-      transaction.oncomplete = () => {
-        console.log('Thumbnails deleted from IndexedDB:', ids.length);
-        resolve();
-      };
+      transaction.oncomplete = () => resolve();
     });
   }
 
@@ -280,12 +243,17 @@ function createFotoFloStore() {
     if (!db) await initDB();
     if (!db) return;
     
-    return new Promise<void>((resolve, reject) => {
-      const transaction = db!.transaction([FILEHANDLE_STORE], 'readwrite');
-      const store = transaction.objectStore(FILEHANDLE_STORE);
-      const request = store.put({ id, handle });
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+    return new Promise<void>((resolve) => {
+      try {
+        const transaction = db!.transaction([FILEHANDLE_STORE], 'readwrite');
+        const store = transaction.objectStore(FILEHANDLE_STORE);
+        const request = store.put({ id, handle });
+        request.onsuccess = () => resolve();
+        request.onerror = () => resolve(); // Don't reject, just continue
+      } catch (e) {
+        // Database connection issue - ignore silently
+        resolve();
+      }
     });
   }
 
@@ -294,24 +262,34 @@ function createFotoFloStore() {
     if (!db) await initDB();
     if (!db) return null;
     
-    return new Promise((resolve, reject) => {
-      const transaction = db!.transaction([FILEHANDLE_STORE], 'readonly');
-      const store = transaction.objectStore(FILEHANDLE_STORE);
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result?.handle || null);
-      request.onerror = () => reject(request.error);
+    return new Promise((resolve) => {
+      try {
+        const transaction = db!.transaction([FILEHANDLE_STORE], 'readonly');
+        const store = transaction.objectStore(FILEHANDLE_STORE);
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result?.handle || null);
+        request.onerror = () => resolve(null);
+      } catch (e) {
+        resolve(null);
+      }
     });
   }
 
   async function deleteFileHandles(ids: string[]) {
+    if (!browser) return;
     if (!db) await initDB();
     if (!db) return;
     
     return new Promise<void>((resolve) => {
-      const transaction = db!.transaction([FILEHANDLE_STORE], 'readwrite');
-      const store = transaction.objectStore(FILEHANDLE_STORE);
-      ids.forEach(id => store.delete(id));
-      transaction.oncomplete = () => resolve();
+      try {
+        const transaction = db!.transaction([FILEHANDLE_STORE], 'readwrite');
+        const store = transaction.objectStore(FILEHANDLE_STORE);
+        ids.forEach(id => store.delete(id));
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+      } catch (e) {
+        resolve();
+      }
     });
   }
 
@@ -397,46 +375,27 @@ function createFotoFloStore() {
 
   /**
    * Generate a compressed thumbnail for a photo
-   * 
-   * This creates a small (300px max) JPEG preview that displays
-   * quickly in the grid. The original full-res image is stored
-   * as a file handle reference for export.
-   * 
-   * Uses canvas API to resize - createsImageBitmap() is faster
-   * than loading the full image into memory.
-   * 
-   * @param id - Photo ID to associate with thumbnail
-   * @param file - Original File object from import
    */
-  function generateThumbnail(id: string, file: File) {
-    if (!browser) return Promise.resolve();
+  async function generateThumbnail(id: string, file: File): Promise<void> {
+    if (!browser || !file || !(file instanceof File)) return;
     
-    return new Promise<void>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const bitmap = await createImageBitmap(file);
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const maxSize = 300;
-          const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
-          canvas.width = Math.floor(bitmap.width * scale);
-          canvas.height = Math.floor(bitmap.height * scale);
-          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-          
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          try {
-            await saveThumbnail(id, dataUrl);
-          } catch (err) {
-            console.warn('Thumbnail save failed (quota exceeded?):', err);
-          }
-        } catch (err) {
-          console.warn('Thumbnail failed:', err);
-        }
-        resolve();
-      };
-      reader.readAsArrayBuffer(file);
-    });
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      const maxSize = 300;
+      const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
+      canvas.width = Math.floor(bitmap.width * scale);
+      canvas.height = Math.floor(bitmap.height * scale);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      
+      await saveThumbnail(id, canvas.toDataURL('image/jpeg', 0.7));
+    } catch (err) {
+      // Silently fail - thumbnail not critical
+    }
   }
 
   function setRating(id: string, rating: number) {
