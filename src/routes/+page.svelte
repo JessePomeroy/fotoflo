@@ -83,20 +83,83 @@
    * with original quality. Handles are re-validated on each use.
    */
   /**
-   * Main import function - tries folder first, falls back to files
-   * Works on both desktop (folder) and mobile (files)
+   * Main import function - tries files first, falls back to folder
+   * Works on both mobile (files) and desktop (folder)
    */
   async function importPhotos() {
     if (!browser) return;
     
-    try {
-      // Try folder picker first (desktop)
-      const dirHandle = await (window as any).showDirectoryPicker();
-      await importFromFolder(dirHandle);
-    } catch (e) {
-      // Fall back to file picker (mobile or Safari)
-      console.log('Using file picker instead');
-      await importFiles();
+    // Create file input
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/*';
+    
+    let filesHandled = false;
+    
+    input.onchange = async (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (!files || files.length === 0) return;
+      
+      filesHandled = true;
+      await processFiles(files);
+    };
+    
+    input.onblur = async () => {
+      // Give user time to select files, then try folder if nothing selected
+      setTimeout(async () => {
+        if (!filesHandled) {
+          try {
+            const dirHandle = await (window as any).showDirectoryPicker();
+            await importFromFolder(dirHandle);
+          } catch (e) {
+            console.log('Import cancelled');
+          }
+        }
+      }, 500);
+    };
+    
+    input.click();
+  }
+
+  async function processFiles(files: FileList) {
+    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File }[] = [];
+    const existingFiles = new Set(
+      fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
+    );
+    
+    for (const file of Array.from(files)) {
+      if (!file.type.match(/^image\/(jpeg|png|gif|webp|tiff?)$/i)) continue;
+      
+      const key = `${file.name.toLowerCase()}-${file.size}`;
+      if (existingFiles.has(key)) continue;
+      
+      const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+      
+      newPhotos.push({
+        id,
+        fileName: file.name,
+        filePath: file.name,
+        fileSize: file.size,
+        dateTaken,
+        file
+      });
+      existingFiles.add(key);
+    }
+    
+    if (newPhotos.length > 0) {
+      fotoflo.importPhotos(newPhotos);
+      for (const photo of newPhotos) {
+        await fotoflo.generateThumbnail(photo.id, photo.file);
+      }
+      await updateFromStore();
+      await loadAllThumbnails();
+      
+      if (newPhotos.length >= 5) {
+        bulkMetaIds = newPhotos.map(p => p.id);
+        showBulkMetaModal = true;
+      }
     }
   }
 
