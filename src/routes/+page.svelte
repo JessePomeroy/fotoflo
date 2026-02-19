@@ -34,20 +34,24 @@
     }
   });
 
-  // UI state only
-  let mounted = $state(false);
-  let showCollectionModal = $state(false);
-  let showBulkMetaModal = $state(false);
-  let showImportModal = $state(false);
-  let showExportModal = $state(false);
-  let viewerPhoto = $state<Photo | null>(null);
-  let mobileFilter = $state('all'); // 'all', 'favorites', or filtered view
+  // UI state - grouped for organization
+  let ui = $state({
+    mounted: false,
+    showCollectionModal: false,
+    showBulkMetaModal: false,
+    showImportModal: false,
+    showExportModal: false,
+    viewerPhoto: null as Photo | null,
+    mobileFilter: 'all' as 'all' | 'favorites' | string
+  });
 
   // Bulk metadata state
-  let bulkFilmStock = $state('');
-  let bulkCamera = $state('');
-  let bulkSubject = $state('');
-  let bulkMetaIds = $state<string[]>([]);
+  let bulk = $state({
+    filmStock: '',
+    camera: '',
+    subject: '',
+    metaIds: [] as string[]
+  });
 
   // Local reactive state that updates from store
   let photos = $state<Photo[]>([]);
@@ -57,7 +61,7 @@
   let sidebarRefresh = $state(0);
 
   onMount(async () => {
-    mounted = true;
+    ui.mounted = true;
     // Initial load
     await updateFromStore();
     // Load thumbnails for existing photos
@@ -208,8 +212,8 @@
       await loadAllThumbnails();
       
       if (newPhotos.length >= 5) {
-        bulkMetaIds = newPhotos.map(p => p.id);
-        showBulkMetaModal = true;
+        bulk.metaIds = newPhotos.map(p => p.id);
+        ui.showBulkMetaModal = true;
       }
     }
   }
@@ -289,8 +293,8 @@
       await loadAllThumbnails();
 
       if (newPhotos.length >= 5) {
-        bulkMetaIds = newPhotos.map(p => p.id);
-        showBulkMetaModal = true;
+        bulk.metaIds = newPhotos.map(p => p.id);
+        ui.showBulkMetaModal = true;
       }
     }
     
@@ -349,8 +353,8 @@
         await loadAllThumbnails();
         
         if (newPhotos.length >= 5) {
-          bulkMetaIds = newPhotos.map(p => p.id);
-          showBulkMetaModal = true;
+          bulk.metaIds = newPhotos.map(p => p.id);
+          ui.showBulkMetaModal = true;
         }
         
         if (newPhotos.length < files.length) {
@@ -363,40 +367,40 @@
   }
 
   function openViewer(photo: Photo) {
-    viewerPhoto = photo;
+    ui.viewerPhoto = photo;
   }
 
   function closeViewer() {
-    viewerPhoto = null;
+    ui.viewerPhoto = null;
   }
 
   function applyBulkMetadata() {
     fotoflo.applyBulkMetadata({
-      filmStock: bulkFilmStock || undefined,
-      camera: bulkCamera || undefined,
-      subject: bulkSubject || undefined
-    }, bulkMetaIds);
-    bulkFilmStock = '';
-    bulkCamera = '';
-    bulkSubject = '';
-    bulkMetaIds = [];
-    showBulkMetaModal = false;
+      filmStock: bulk.filmStock || undefined,
+      camera: bulk.camera || undefined,
+      subject: bulk.subject || undefined
+    }, bulk.metaIds);
+    bulk.filmStock = '';
+    bulk.camera = '';
+    bulk.subject = '';
+    bulk.metaIds = [];
+    ui.showBulkMetaModal = false;
     updateFromStore();
     sidebarRefresh++; // Force sidebar to refresh
   }
 
   function toggleBulkMetaModal() {
-    showBulkMetaModal = !showBulkMetaModal;
-    if (showBulkMetaModal) {
-      // Use current selection if no bulkMetaIds set (i.e., opened from toolbar)
-      if (bulkMetaIds.length === 0) {
-        bulkMetaIds = Array.from(selectedIds);
+    ui.showBulkMetaModal = !ui.showBulkMetaModal;
+    if (ui.showBulkMetaModal) {
+      // Use current selection if no bulk.metaIds set (i.e., opened from toolbar)
+      if (bulk.metaIds.length === 0) {
+        bulk.metaIds = Array.from(selectedIds);
       }
     } else {
-      bulkFilmStock = '';
-      bulkCamera = '';
-      bulkSubject = '';
-      bulkMetaIds = [];
+      bulk.filmStock = '';
+      bulk.camera = '';
+      bulk.subject = '';
+      bulk.metaIds = [];
     }
   }
 
@@ -582,7 +586,7 @@
     </div>
 
     <div class="mobile-filters">
-      <select bind:value={mobileFilter} onchange={(e) => {
+      <select bind:value={ui.mobileFilter} onchange={(e) => {
         const v = e.currentTarget.value;
         if (v === 'favorites') {
           fotoflo.setView('favorites');
@@ -650,7 +654,7 @@
           <button class="btn" onclick={selectAll}>select all</button>
         {/if}
       {/if}
-      <button class="btn primary" onclick={() => showImportModal = true}>import</button>
+      <button class="btn primary" onclick={() => ui.showImportModal = true}>import</button>
     </div>
   </header>
 
@@ -674,64 +678,64 @@
       selectedCount={selectedIds.size}
       onOpenBulkMeta={toggleBulkMetaModal}
       onDelete={deleteSelected}
-      onExport={() => showExportModal = true}
+      onExport={() => ui.showExportModal = true}
       onClear={clearSelection}
     />
   {/if}
 
-  {#if mounted && NeoDialog && showImportModal}
-    <NeoDialog open={showImportModal} onclose={() => showImportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
+  {#if ui.mounted && NeoDialog && ui.showImportModal}
+    <NeoDialog open={ui.showImportModal} onclose={() => ui.showImportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
       <div class="modal-content">
         <h2>import photos</h2>
         <div class="import-choices">
-          <button class="import-choice" onclick={() => { showImportModal = false; importFiles(); }}>
+          <button class="import-choice" onclick={() => { ui.showImportModal = false; importFiles(); }}>
             <span class="icon">📁</span>
             <span>select files</span>
           </button>
-          <button class="import-choice" onclick={() => { showImportModal = false; tryFolderImport(); }}>
+          <button class="import-choice" onclick={() => { ui.showImportModal = false; tryFolderImport(); }}>
             <span class="icon">📂</span>
             <span>select folder</span>
           </button>
         </div>
         <div class="actions">
-          <button onclick={() => showImportModal = false}>cancel</button>
+          <button onclick={() => ui.showImportModal = false}>cancel</button>
         </div>
       </div>
     </NeoDialog>
   {/if}
 
-  {#if mounted && NeoDialog && showExportModal}
-    <NeoDialog open={showExportModal} onclose={() => showExportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
+  {#if ui.mounted && NeoDialog && ui.showExportModal}
+    <NeoDialog open={ui.showExportModal} onclose={() => ui.showExportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
       <div class="modal-content">
         <h2>export {selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''}</h2>
         <div class="export-choices">
-          <button class="export-choice" onclick={() => { showExportModal = false; exportSelected(false); }}>
+          <button class="export-choice" onclick={() => { ui.showExportModal = false; exportSelected(false); }}>
             <span class="icon">📄</span>
             <span>export normally</span>
           </button>
-          <button class="export-choice" onclick={() => { showExportModal = false; exportSelected(true); }}>
+          <button class="export-choice" onclick={() => { ui.showExportModal = false; exportSelected(true); }}>
             <span class="icon">🏷️</span>
             <span>export with metadata</span>
           </button>
         </div>
         <div class="actions">
-          <button onclick={() => showExportModal = false}>cancel</button>
+          <button onclick={() => ui.showExportModal = false}>cancel</button>
         </div>
       </div>
     </NeoDialog>
   {/if}
 
-  {#if mounted && NeoDialog && showBulkMetaModal}
-    <NeoDialog open={showBulkMetaModal} onclose={() => showBulkMetaModal = false} blur={40} elevation={20} style="border-radius: 16px; border: none;">
+  {#if ui.mounted && NeoDialog && ui.showBulkMetaModal}
+    <NeoDialog open={ui.showBulkMetaModal} onclose={() => ui.showBulkMetaModal = false} blur={40} elevation={20} style="border-radius: 16px; border: none;">
       <div class="modal-content compact">
-        <h2>add metadata to {bulkMetaIds.length} photos</h2>
+        <h2>add metadata to {bulk.metaIds.length} photos</h2>
 
         <div class="field">
           <label>film stock</label>
           <input
             type="text"
             placeholder="e.g. Portra 400"
-            bind:value={bulkFilmStock}
+            bind:value={bulk.filmStock}
           />
         </div>
 
@@ -740,7 +744,7 @@
           <input
             type="text"
             placeholder="e.g. Leica M6"
-            bind:value={bulkCamera}
+            bind:value={bulk.camera}
           />
         </div>
 
@@ -749,19 +753,19 @@
           <input
             type="text"
             placeholder="e.g. Rollercoaster"
-            bind:value={bulkSubject}
+            bind:value={bulk.subject}
           />
         </div>
 
         <div class="actions">
-          <button onclick={() => showBulkMetaModal = false}>skip</button>
+          <button onclick={() => ui.showBulkMetaModal = false}>skip</button>
           <button class="primary" onclick={applyBulkMetadata}>apply</button>
         </div>
       </div>
     </NeoDialog>
   {/if}
 
-  <Viewer photo={viewerPhoto} onclose={closeViewer} onNavigate={(photo) => viewerPhoto = photo} />
+  <Viewer photo={ui.viewerPhoto} onclose={closeViewer} onNavigate={(photo) => ui.viewerPhoto = photo} />
 </div>
 
 <style>
