@@ -287,11 +287,11 @@
   }
 
   function applyBulkMetadata() {
-    fotoflo.applyBulkMetadata({
+    fotoflo.applyBulkMetadata(bulk.metaIds, {
       filmStock: bulk.filmStock || undefined,
       camera: bulk.camera || undefined,
       subject: bulk.subject || undefined
-    }, bulk.metaIds);
+    });
     bulk.filmStock = '';
     bulk.camera = '';
     bulk.subject = '';
