@@ -4,99 +4,217 @@ A local-first film photography organizer that runs entirely in your browser. No 
 
 ## Features
 
-- **Local-first**: All data stored in browser IndexedDB — your photos never leave your device
+- **Local-first**: All data stored in browser — your photos never leave your device
+- **Dual-layer storage**: LocalStorage for metadata, Cache API + IndexedDB for thumbnails
 - **Bulk import**: Import entire folders of film scans at once
-- **Bulk metadata**: Add film stock, camera, and subject to multiple photos at once
-- **Smart export**: Export photos with renamed files based on metadata (e.g., `portra400-leicam6-rollercoaster-001.jpg`)
-- **Filtering**: Filter by film stock, camera, subject, or rating
-- **Favorites**: Mark your favorite photos
-- **Backup & restore**: Export metadata as JSON for safekeeping, import later if needed
+- **Bulk metadata**: Add film stock, camera, and subject to multiple photos
+- **Collections**: Group photos into named collections
+- **Smart export**: Export renamed files based on metadata
+- **EXIF support**: Read and write EXIF data automatically
+- **Offline-first**: Works without internet connection
+- **Progressive loading**: Photos show instantly, thumbnails load in background
+- **Web Worker thumbnails**: Thumbnail generation off main thread for responsiveness
 
 ## Getting Started
 
 ### Prerequisites
 
+- Node.js 18+
 - A modern browser (Chrome, Firefox, Safari, Edge)
-- No server required — runs entirely in the browser
 
 ### Running Locally
 
 ```bash
-# Install dependencies
+cd fotoflo
 npm install
-
-# Start development server
 npm run dev
+```
 
-# Build for production
-npm run build
+Open http://localhost:5173
 
-# Preview production build
-npm run preview
+### Building
+
+```bash
+npm run build      # Production build
+npm run preview    # Preview build
+npm run test       # Run tests
 ```
 
 ### Deploying
 
-This app works great on Vercel, Netlify, or any static host:
+Works on Vercel, Netlify, or any static host:
 
-1. Push to GitHub
-2. Import in Vercel (or your host of choice)
-3. Deploy — it's that simple!
+```bash
+git push origin main
+# Import in Vercel/Netlify
+```
 
-## How It Works
+## Architecture
 
-### Data Storage
+```
+┌─────────────────────────────────────────────────────┐
+│                    FotoFlo App                       │
+├─────────────────────────────────────────────────────┤
+│                                                       │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐        │
+│  │ Sidebar  │  │ PhotoGrid │  │ Toolbar  │        │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘        │
+│       │              │              │                 │
+│       └──────────────┼──────────────┘                 │
+│                      │                                │
+│              ┌───────▼────────┐                       │
+│              │  +page.svelte │                       │
+│              │  (coordination)│                       │
+│              └───────┬────────┘                       │
+│                      │                                │
+│              ┌───────▼────────┐                       │
+│              │ fotoflo.svelte.ts │                   │
+│              │    (store)      │                       │
+│              └───────┬────────┘                       │
+│                      │                                │
+│  ┌─────────────────┼─────────────────┐               │
+│  │                 │                 │               │
+│  ▼                 ▼                 ▼               │
+│ ┌────────┐  ┌────────────┐  ┌────────────────┐   │
+│ │LocalStorage│ │ IndexedDB │  │   Cache API   │   │
+│ │(metadata) │ │(blobs)    │  │  (thumbnails)│   │
+│ └────────┘  └────────────┘  └────────────────┘   │
+│                                                       │
+└─────────────────────────────────────────────────────┘
+```
 
-FotoFlo uses **IndexedDB** (a browser database) to store:
-- Photo thumbnails (compressed images for display)
-- File handles (references to original files)
-- Metadata (film stock, camera, subject, rating, etc.)
+### Storage Strategy
 
-This means your data persists across browser sessions but stays entirely local.
+**LocalStorage** (5MB limit, sync)
+- Photo metadata
+- Collections
+- Settings
 
-### File System Access
+**IndexedDB** (large storage, async)
+- File handles (for re-export)
+- Fallback thumbnail storage
+- Blob data
 
-The app uses the **File System Access API** to:
-- Read photos from folders you select
-- Export renamed photos to a destination folder
-- Re-link originals if you re-import from a different folder
+**Cache API** (primary thumbnail storage)
+- Native blob support
+- Better quota management
+- Faster than IndexedDB for blobs
 
-### Metadata Schema
+### Key Files
 
-Each photo stores:
-```typescript
-{
-  id: string;           // Unique identifier
-  fileName: string;     // Original filename
-  filePath: string;     // Path within source folder
-  fileSize: number;     // File size in bytes
-  dateTaken: string;    // EXIF date or file modification date
-  importedAt: string;   // When imported to FotoFlo
-  rating: number;        // 0-5 star rating
-  isFavorite: boolean;   // Favorite flag
-  tags: string[];        // Tags (future feature)
-  filmStock?: string;    // e.g., "Portra 400"
-  camera?: string;       // e.g., "Leica M6"
-  subject?: string;      // e.g., "rollercoaster"
-  frameNumber?: string;  // e.g., "001"
-}
+```
+src/
+├── lib/
+│   ├── stores/
+│   │   ├── fotoflo.svelte.ts     # Main store (~750 lines)
+│   │   └── fotoflo.test.ts       # Store tests
+│   ├── workers/
+│   │   └── thumbnail.worker.ts    # Off-thread thumbnail gen
+│   ├── utils/
+│   │   └── exif.ts              # EXIF read/write
+│   ├── import.ts                 # Unified import module
+│   └── types.ts                  # Centralized types
+├── components/
+│   ├── PhotoGrid.svelte          # Grid display
+│   ├── Toolbar.svelte            # Action toolbar
+│   ├── Sidebar.svelte            # Filters & collections
+│   ├── Viewer.svelte             # Single photo view
+│   ├── ImportModal.svelte        # Import dialog
+│   └── BulkMetaModal.svelte      # Bulk edit dialog
+└── routes/
+    └── +page.svelte             # Main app page
+```
+
+### Data Flow
+
+```
+User Selects Files/Folder
+         │
+         ▼
+┌─────────────────┐
+│    import.ts    │  ← Validate, EXIF extract, deduplicate
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────┐
+│ fotoflo.svelte.ts   │  ← Store photos, generate thumbnails
+└────────┬────────────┘
+         │
+    ┌────┴────┬────────────┐
+    ▼         ▼            ▼
+LocalStorage  IndexedDB    Cache API
+(metadata)   (handles)   (thumbnails)
 ```
 
 ## Tech Stack
 
-- **Svelte 5** with runes for reactive state management
-- **IndexedDB** for local data persistence
-- **File System Access API** for reading/writing files
-- **SvelteKit** for routing and build
-- **PWA** ready with service worker
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Framework** | Svelte 5 + SvelteKit | UI + routing |
+| **State** | Svelte 5 $state() | Reactive state |
+| **Storage** | LocalStorage + IndexedDB + Cache API | Persistence |
+| **EXIF** | exifreader + piexifjs | Metadata |
+| **UI** | Custom CSS + NeoDialog | Glass-morphism |
+| **Testing** | Vitest | Unit tests |
+| **Build** | Vite | Bundler |
+
+## Adding Features
+
+### Add a New Filter
+
+1. Add to `FotoFloState` in `types.ts`:
+   ```typescript
+   filterNewField: string | null;
+   ```
+
+2. Add setter in `fotoflo.svelte.ts`:
+   ```typescript
+   function setFilterNewField(value: string | null) {
+     state.filterNewField = value;
+   }
+   ```
+
+3. Add to `getFilteredPhotos()`:
+   ```typescript
+   if (state.filterNewField) {
+     result = result.filter(p => p.field === state.filterNewField);
+   }
+   ```
+
+4. Export from store return object
+
+### Add a Metadata Field
+
+1. Add to `Photo` interface in `types.ts`:
+   ```typescript
+   newField?: string;
+   ```
+
+2. Update metadata modal
+3. Update EXIF export if needed
+
+## Testing
+
+```bash
+npm run test          # Run all tests
+npm run test:watch   # Watch mode
+```
+
+Tests cover:
+- Store logic (filtering, sorting, collections)
+- Import module (deduplication, ID generation)
+- Type validation
 
 ## Privacy
 
-FotoFlo is designed with privacy first:
-- No analytics, no tracking, no cookies
-- All data stays in your browser
-- No server communication (except for hosting the app itself)
+- No analytics, tracking, or cookies
+- All data stays local
+- No server communication
 
 ## License
 
 MIT
+
+---
+
+Built with ❤️ using Svelte 5
