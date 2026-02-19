@@ -29,6 +29,7 @@
   let showCollectionModal = $state(false);
   let showBulkMetaModal = $state(false);
   let showImportModal = $state(false);
+  let showExportModal = $state(false);
   let viewerPhoto = $state<Photo | null>(null);
   let mobileFilter = $state('all'); // 'all', 'favorites', or filtered view
 
@@ -417,7 +418,7 @@
    * Filename format: {filmStock}-{camera}-{subject}-{frame}.{ext}
    * Example: portra400-leicam6-rollercoaster-001.jpg
    */
-  async function exportSelected() {
+  async function exportSelected(withMetadata = false) {
     const selected = photos.filter(p => selectedIds.has(p.id));
     
     try {
@@ -445,7 +446,19 @@
             // Use full-res original
             const fileHandle = await destHandle.getFileHandle(newName, { create: true });
             const writable = await fileHandle.createWritable();
-            await writable.write(originalFile);
+            
+            if (withMetadata) {
+              // Write metadata into the file
+              const exportedFile = await fotoflo.exportPhoto(p.id);
+              if (exportedFile) {
+                await writable.write(exportedFile);
+              } else {
+                await writable.write(originalFile);
+              }
+            } else {
+              await writable.write(originalFile);
+            }
+            
             await writable.close();
             exported++;
             usedFullRes++;
@@ -651,7 +664,7 @@
       selectedCount={selectedIds.size}
       onOpenBulkMeta={toggleBulkMetaModal}
       onDelete={deleteSelected}
-      onExport={exportSelected}
+      onExport={() => showExportModal = true}
       onClear={clearSelection}
     />
   {/if}
@@ -672,6 +685,27 @@
         </div>
         <div class="actions">
           <button onclick={() => showImportModal = false}>cancel</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  {#if showExportModal}
+    <div class="modal-overlay" onclick={() => showExportModal = false}>
+      <div class="modal" onclick={(e) => e.stopPropagation()}>
+        <h2>export {selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''}</h2>
+        <div class="export-choices">
+          <button class="export-choice" onclick={() => { showExportModal = false; exportSelected(false); }}>
+            <span class="icon">📄</span>
+            <span>export normally</span>
+          </button>
+          <button class="export-choice" onclick={() => { showExportModal = false; exportSelected(true); }}>
+            <span class="icon">🏷️</span>
+            <span>export with metadata</span>
+          </button>
+        </div>
+        <div class="actions">
+          <button onclick={() => showExportModal = false}>cancel</button>
         </div>
       </div>
     </div>
@@ -979,6 +1013,45 @@
   }
 
   .import-choice span:last-child {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #2E3338;
+  }
+
+  .export-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .export-choice {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(93, 123, 140, 0.2);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+  }
+
+  .export-choice:hover {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: rgba(93, 123, 140, 0.4);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+
+  .export-choice .icon {
+    font-size: 1.5rem;
+  }
+
+  .export-choice span:last-child {
     font-size: 1rem;
     font-weight: 500;
     color: #2E3338;
