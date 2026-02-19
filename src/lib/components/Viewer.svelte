@@ -88,22 +88,20 @@
 </script>
 
 {#if mounted && photo && NeoDialog}
-  <!-- Nav buttons rendered separately at top z-index -->
-  <button class="nav-btn nav-prev" onclick={prevPhoto}>‹</button>
-  <button class="nav-btn nav-next" onclick={nextPhoto}>›</button>
-  
-  <div class="viewer-overlay" onclick={onclose}>
+  <div class="viewer-overlay" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}>
     <NeoDialog open={!!photo} onclose={onclose} blur={20} elevation={20} style="border-radius: 20px; border: none;">
       {#if photo}
         <div class="viewer" onclick={(e) => e.stopPropagation()} onwheel={(e) => e.stopPropagation()}>
         <button class="close" onclick={onclose}>×</button>
 
         <div class="viewer-img">
+          <button class="img-nav" onclick={(e) => { e.stopPropagation(); prevPhoto(); }}>‹</button>
           {#if thumbUrl}
             <img src={thumbUrl} alt={photo.fileName} />
           {:else}
             <div class="no-img">photo</div>
           {/if}
+          <button class="img-nav" onclick={(e) => { e.stopPropagation(); nextPhoto(); }}>›</button>
         </div>
 
         <div class="viewer-info" onwheel={(e) => e.stopPropagation()}>
@@ -184,6 +182,7 @@
     {/if}
   </NeoDialog>
   </div>
+  
 {/if}
 
 <style>
@@ -195,6 +194,7 @@
     justify-content: center;
     z-index: 1000;
     background: rgba(0, 0, 0, 0.3);
+    pointer-events: auto;
   }
 
   .viewer {
@@ -232,10 +232,59 @@
     background: rgba(255, 255, 255, 0.4);
   }
 
-  .nav-btn {
-    position: fixed;
+  .viewer-img {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .viewer-img {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .img-nav {
+    position: absolute;
     top: 50%;
     transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    font-size: 3rem;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    z-index: 5;
+    transition: all 0.2s ease;
+    padding: 20px;
+    line-height: 1;
+  }
+
+  .img-nav:first-child {
+    left: 0;
+  }
+
+  .img-nav:last-child {
+    right: 0;
+  }
+
+  .img-nav:hover {
+    color: white;
+  }
+
+  .nav-container {
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: 10000;
+  }
+
+  .nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: auto;
     background: rgba(255, 255, 255, 0.95);
     border: none;
     border-radius: 50%;
@@ -245,7 +294,6 @@
     font-weight: 300;
     color: #333;
     cursor: pointer;
-    z-index: 10000;
     transition: all 0.2s ease;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
     display: flex;
@@ -263,11 +311,11 @@
     transform: translateY(-50%) scale(0.95);
   }
 
-  .nav-prev {
+  .nav-btn.nav-prev {
     left: 24px;
   }
 
-  .nav-next {
+  .nav-btn.nav-next {
     right: 24px;
   }
 
