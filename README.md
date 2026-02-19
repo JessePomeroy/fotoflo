@@ -8,7 +8,6 @@ A local-first film photography organizer that runs entirely in your browser. No 
 - **Dual-layer storage**: LocalStorage for metadata, Cache API + IndexedDB for thumbnails
 - **Bulk import**: Import entire folders of film scans at once
 - **Bulk metadata**: Add film stock, camera, and subject to multiple photos
-- **Collections**: Group photos into named collections
 - **Smart export**: Export renamed files based on metadata
 - **EXIF support**: Read and write EXIF data automatically
 - **Offline-first**: Works without internet connection
@@ -87,7 +86,6 @@ git push origin main
 
 **LocalStorage** (5MB limit, sync)
 - Photo metadata
-- Collections
 - Settings
 
 **IndexedDB** (large storage, async)
@@ -117,7 +115,7 @@ src/
 ├── components/
 │   ├── PhotoGrid.svelte          # Grid display
 │   ├── Toolbar.svelte            # Action toolbar
-│   ├── Sidebar.svelte            # Filters & collections
+│   ├── Sidebar.svelte            # Filters
 │   ├── Viewer.svelte             # Single photo view
 │   ├── ImportModal.svelte        # Import dialog
 │   └── BulkMetaModal.svelte      # Bulk edit dialog
