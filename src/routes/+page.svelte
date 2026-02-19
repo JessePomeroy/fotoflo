@@ -28,6 +28,7 @@
   let mounted = $state(false);
   let showCollectionModal = $state(false);
   let showBulkMetaModal = $state(false);
+  let showImportModal = $state(false);
   let viewerPhoto = $state<Photo | null>(null);
   let mobileFilter = $state('all'); // 'all', 'favorites', or filtered view
 
@@ -83,8 +84,19 @@
    * with original quality. Handles are re-validated on each use.
    */
   /**
-   * Main import function - tries files first, falls back to folder
-   * Works on both mobile (files) and desktop (folder)
+   * Try folder import - separate function for the modal button
+   */
+  async function tryFolderImport() {
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker();
+      await importFromFolder(dirHandle);
+    } catch (e) {
+      console.log('Folder import cancelled');
+    }
+  }
+
+  /**
+   * Main import function - called from modal choice
    */
   async function importPhotos() {
     if (!browser) return;
@@ -558,7 +570,7 @@
           <button class="btn" onclick={selectAll}>select all</button>
         {/if}
       {/if}
-      <button class="btn primary" onclick={importPhotos}>import</button>
+      <button class="btn primary" onclick={() => showImportModal = true}>import</button>
     </div>
   </header>
 
@@ -585,6 +597,27 @@
       onExport={exportSelected}
       onClear={clearSelection}
     />
+  {/if}
+
+  {#if showImportModal}
+    <div class="modal-overlay" onclick={() => showImportModal = false}>
+      <div class="modal" onclick={(e) => e.stopPropagation()}>
+        <h2>import photos</h2>
+        <div class="import-choices">
+          <button class="import-choice" onclick={() => { showImportModal = false; importFiles(); }}>
+            <span class="icon">📁</span>
+            <span>select files</span>
+          </button>
+          <button class="import-choice" onclick={() => { showImportModal = false; tryFolderImport(); }}>
+            <span class="icon">📂</span>
+            <span>select folder</span>
+          </button>
+        </div>
+        <div class="actions">
+          <button onclick={() => showImportModal = false}>cancel</button>
+        </div>
+      </div>
+    </div>
   {/if}
 
   {#if showBulkMetaModal}
@@ -853,6 +886,41 @@
     color: #1a1a1a;
     margin-bottom: 12px;
     text-shadow: 0 1px 2px rgba(255,255,255,0.5);
+  }
+
+  .import-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .import-choice {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px 20px;
+    background: rgba(93, 123, 140, 0.1);
+    border: 1px solid rgba(93, 123, 140, 0.2);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+  }
+
+  .import-choice:hover {
+    background: rgba(93, 123, 140, 0.2);
+    border-color: rgba(93, 123, 140, 0.4);
+  }
+
+  .import-choice .icon {
+    font-size: 1.5rem;
+  }
+
+  .import-choice span:last-child {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #2E3338;
   }
 
   .modal input {
