@@ -24,6 +24,16 @@
   import type { Photo } from '$lib/stores/fotoflo.svelte';
   import { readEXIF } from '$lib/utils/exif';
 
+  let NeoDialog: any = $state(null);
+
+  onMount(async () => {
+    if (browser) {
+      const mod = await import('@dvcol/neo-svelte');
+      NeoDialog = mod.NeoDialog;
+      mounted = true;
+    }
+  });
+
   // UI state only
   let mounted = $state(false);
   let showCollectionModal = $state(false);
@@ -669,9 +679,9 @@
     />
   {/if}
 
-  {#if showImportModal}
-    <div class="modal-overlay" onclick={() => showImportModal = false}>
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
+  {#if mounted && NeoDialog && showImportModal}
+    <NeoDialog open={showImportModal} onclose={() => showImportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
+      <div class="modal-content">
         <h2>import photos</h2>
         <div class="import-choices">
           <button class="import-choice" onclick={() => { showImportModal = false; importFiles(); }}>
@@ -687,12 +697,12 @@
           <button onclick={() => showImportModal = false}>cancel</button>
         </div>
       </div>
-    </div>
+    </NeoDialog>
   {/if}
 
-  {#if showExportModal}
-    <div class="modal-overlay" onclick={() => showExportModal = false}>
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
+  {#if mounted && NeoDialog && showExportModal}
+    <NeoDialog open={showExportModal} onclose={() => showExportModal = false} blur={40} elevation={20} style="border-radius: 24px; border: none;">
+      <div class="modal-content">
         <h2>export {selectedIds.size} photo{selectedIds.size !== 1 ? 's' : ''}</h2>
         <div class="export-choices">
           <button class="export-choice" onclick={() => { showExportModal = false; exportSelected(false); }}>
@@ -708,12 +718,12 @@
           <button onclick={() => showExportModal = false}>cancel</button>
         </div>
       </div>
-    </div>
+    </NeoDialog>
   {/if}
 
-  {#if showBulkMetaModal}
-    <div class="modal-overlay" onclick={() => showBulkMetaModal = false}>
-      <div class="modal compact" onclick={(e) => e.stopPropagation()}>
+  {#if mounted && NeoDialog && showBulkMetaModal}
+    <NeoDialog open={showBulkMetaModal} onclose={() => showBulkMetaModal = false} blur={40} elevation={20} style="border-radius: 16px; border: none;">
+      <div class="modal-content compact">
         <h2>add metadata to {bulkMetaIds.length} photos</h2>
 
         <div class="field">
@@ -748,7 +758,7 @@
           <button class="primary" onclick={applyBulkMetadata}>apply</button>
         </div>
       </div>
-    </div>
+    </NeoDialog>
   {/if}
 
   <Viewer photo={viewerPhoto} onclose={closeViewer} onNavigate={(photo) => viewerPhoto = photo} />
@@ -912,6 +922,47 @@
     flex: 1;
     overflow-y: auto;
     padding: 24px 32px;
+  }
+
+  .modal-content {
+    background: transparent;
+    padding: 0;
+    min-width: 340px;
+    max-width: 90vw;
+  }
+
+  .modal-content.compact {
+    min-width: 280px;
+  }
+
+  .modal-content.compact h2 {
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+  }
+
+  .modal-content.compact .field {
+    margin-bottom: 4px;
+  }
+
+  .modal-content.compact .field label {
+    font-size: 0.6rem;
+    margin-bottom: 1px;
+  }
+
+  .modal-content.compact .field input {
+    padding: 6px 8px;
+    font-size: 0.8rem;
+    margin-bottom: 0;
+  }
+
+  .modal-content.compact .actions {
+    margin-top: 8px;
+    gap: 8px;
+  }
+
+  .modal-content.compact .actions button {
+    padding: 6px 12px;
+    font-size: 0.8rem;
   }
 
   .modal-overlay {
