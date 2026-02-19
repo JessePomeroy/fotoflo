@@ -1,107 +1,235 @@
 /**
- * FotoFlo Store - The heart of the application
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║                                                              ║
+ * ║   FotoFlo Store                                               ║
+ * ║   The heart of the application                              ║
+ * ║                                                              ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
  * 
- * This store manages all application state using Svelte 5's reactive system ($state).
+ * ════════════════════════════════════════════════════════════════════════
+ * ARCHITECTURE OVERVIEW
+ * ════════════════════════════════════════════════════════════════════════
+ * 
+ * This store manages all application state using Svelte 5's reactive system.
  * It uses a dual-layer approach for data persistence:
  * 
- * 1. **LocalStorage**: Stores photo metadata (lightweight, fast access)
- * 2. **IndexedDB**: Stores larger binary data (thumbnails, file handles)
+ * ┌─────────────────────────────────────────────────────────────────┐
+ * │                      APPLICATION STATE                          │
+ * │  ┌──────────────────────┐    ┌──────────────────────────────┐  │
+ * │  │   LocalStorage       │    │      IndexedDB              │  │
+ * │  │  (Metadata only)     │    │  (Thumbnails + Handles)     │  │
+ * │  │  - Photo metadata    │    │  - JPEG blobs              │  │
+ * │  │  - Collections       │    │  - FileSystemFileHandles    │  │
+ * │  │  - Settings         │    │                            │  │
+ * │  └──────────────────────┘    └──────────────────────────────┘  │
+ * └─────────────────────────────────────────────────────────────────┘
  * 
- * This separation keeps LocalStorage fast while IndexedDB handles larger data.
+ * WHY TWO STORES?
+ * - LocalStorage: Fast, synchronous, 5MB limit (perfect for metadata)
+ * - IndexedDB: Large storage, async, can store blobs (thumbnails)
+ * 
+ * ════════════════════════════════════════════════════════════════════════
+ * SVELTE 5 REACTIVITY
+ * ════════════════════════════════════════════════════════════════════════
+ * 
+ * We use Svelte 5's $state() for reactivity:
+ * - $state() creates reactive proxies
+ * - Derived values are computed automatically
+ * - Components update when state changes
+ * 
+ * EXAMPLE:
+ *   let count = $state(0);
+ *   let double = $derived(count * 2);
+ *   // When count changes, double updates automatically
  * 
  * @module fotoflo
  */
+
+// ════════════════════════════════════════════════════════════════════════
+// IMPORTS
+// ════════════════════════════════════════════════════════════════════════
+
 import { browser } from '$app/environment';
 import { writeEXIF } from '$lib/utils/exif';
 import type { Photo, Collection, FotoFloState } from '$lib/types';
 
+// ════════════════════════════════════════════════════════════════════════
+// STORE INITIALIZATION
+// ════════════════════════════════════════════════════════════════════════
+
 /**
  * Creates the FotoFlo store with reactive state
  * 
- * Uses Svelte 5's $state() for reactivity - when state changes,
- * any component using derived values will automatically update.
+ * This is the main export - it creates and returns the store object
+ * with all getters and actions.
  * 
- * @returns {object} The store with getters and actions
+ * @returns The store with getters and actions
  */
 function createFotoFloStore() {
-  // Initial state - defines all possible state values
+  // ═══════════════════════════════════════════════════════════════════
+  // INITIAL STATE
+  // ═══════════════════════════════════════════════════════════════════
+  // Define the starting state - all fields with their default values
   const initialState: FotoFloState = {
-    photos: [],
-    collections: [],
-    selectedIds: new Set(),
-    activeView: 'all',
-    activeCollectionId: null,
-    searchQuery: '',
-    sortBy: 'date',
-    filterFilmStock: null,
-    filterCamera: null,
-    filterRating: null,
-    filterSubject: null
+    photos: [],           // All photos in the library
+    collections: [],      // User-created collections
+    selectedIds: new Set(), // IDs of currently-selected photos
+    activeView: 'all',   // Current view mode
+    activeCollectionId: null, // Collection being viewed (if any)
+    searchQuery: '',     // Full-text search
+    sortBy: 'date',      // Sort order
+    filterFilmStock: null, // Film stock filter
+    filterCamera: null,  // Camera filter
+    filterRating: null,   // Minimum rating filter
+    filterSubject: null  // Subject filter
   };
 
+  // Create reactive state
   let state = $state(initialState);
+  
+  // IndexedDB connection (lazy initialized)
   let db: IDBDatabase | null = null;
   
-  // Storage constants
+  // Web Worker for thumbnail generation (lazy initialized)
+  let worker: Worker | null = null;
+
+  // ═══════════════════════════════════════════════════════════════════
+  // STORAGE CONSTANTS
+  // ═══════════════════════════════════════════════════════════════════
+  
   const CACHE_NAME = 'fotoflo-thumbnails-v1';
-  const THUMBNAIL_STORE = 'thumbnails';     // IndexedDB fallback
-  const FILEHANDLE_STORE = 'filehandles';   // File handles (IndexedDB only)
+  const THUMBNAIL_STORE = 'thumbnails';      // Thumbnail blobs
+  const FILEHANDLE_STORE = 'filehandles';    // Original file handles
+
+  // ═══════════════════════════════════════════════════════════════════
+  // STORAGE STRATEGY
+  // ═══════════════════════════════════════════════════════════════════
+  //
+  // THUMBNAIL STORAGE (tiered):
+  // 1. Cache API (primary) - Native blob storage, fast, good quotas
+  // 2. IndexedDB (fallback) - Universal support, data URLs
+  //
+  // FILE HANDLES:
+  // - IndexedDB only (Cache API doesn't support FileSystemFileHandle)
+  //
+  // WHY CACHE API?
+  // - Designed for HTTP responses and blobs
+  // - Better quota management than IndexedDB
+  // - Automatic cleanup with cache expiration
+  // - Works great with service workers
+  //
+
+  // ═══════════════════════════════════════════════════════════════════
+  // BROWSER CAPABILITY CHECK
+  // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Thumbnail Storage Strategy:
-   * 1. Cache API (primary) - Fast, designed for blob storage, good quota management
-   * 2. IndexedDB (fallback) - Universal support, stores as data URLs
+   * Check if Cache API is available
    * 
-   * Cache API is preferred because:
-   * - Native blob storage (no base64 encoding overhead)
-   * - Better performance for image data
-   * - Automatic quota management
-   * - Works great with service workers for offline
+   * Cache API is supported in most modern browsers but may be
+   * unavailable in some contexts (private browsing, certain browsers).
    */
-
-  // Check if Cache API is available
   function hasCacheAPI(): boolean {
     return browser && 'caches' in window;
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // INDEXEDDB SETUP
+  // ═══════════════════════════════════════════════════════════════════
+
   /**
-   * Initialize IndexedDB (used for file handles and as thumbnail fallback)
+   * Initialize IndexedDB connection
+   * 
+   * This is lazy-initialized - the connection is only opened when first needed.
+   * This avoids unnecessary database connections on server-side rendering.
+   * 
+   * DATABASE STRUCTURE:
+   * - Version: 2
+   * - Stores:
+   *   - 'thumbnails': { id, data } - Thumbnail blobs
+   *   - 'filehandles': { id, handle } - FileSystemFileHandle references
    */
   async function initDB() {
-    if (db) return;
-    if (!browser) return Promise.resolve();
+    if (db) return;                    // Already connected
+    if (!browser) return;             // Not in browser
     
     return new Promise<void>((resolve) => {
-      try {
-        if (typeof indexedDB === 'undefined') {
-          console.warn('IndexedDB not available');
-          resolve();
-          return;
-        }
-        
-        const request = indexedDB.open('FotoFlo', 2);
-        request.onerror = () => { console.warn('IndexedDB open error'); resolve(); };
-        request.onsuccess = () => { db = request.result; resolve(); };
-        request.onupgradeneeded = (event: any) => {
-          const database = event.target.result;
-          if (!database.objectStoreNames.contains(THUMBNAIL_STORE)) {
-            database.createObjectStore(THUMBNAIL_STORE, { keyPath: 'id' });
-          }
-          if (!database.objectStoreNames.contains(FILEHANDLE_STORE)) {
-            database.createObjectStore(FILEHANDLE_STORE, { keyPath: 'id' });
-          }
-        };
-      } catch (e) {
-        console.warn('IndexedDB init failed:', e);
+      // Browser check
+      if (typeof indexedDB === 'undefined') {
         resolve();
+        return;
       }
+      
+      // Open database
+      const request = indexedDB.open('FotoFlo', 2);
+      
+      request.onerror = () => {
+        console.warn('IndexedDB open error');
+        resolve();
+      };
+      
+      request.onsuccess = () => {
+        db = request.result;
+        resolve();
+      };
+      
+      // Create object stores if needed
+      request.onupgradeneeded = (event: any) => {
+        const database = event.target.result;
+        
+        if (!database.objectStoreNames.contains(THUMBNAIL_STORE)) {
+          database.createObjectStore(THUMBNAIL_STORE, { keyPath: 'id' });
+        }
+        if (!database.objectStoreNames.contains(FILEHANDLE_STORE)) {
+          database.createObjectStore(FILEHANDLE_STORE, { keyPath: 'id' });
+        }
+      };
     });
   }
 
-  // ==================== THUMBNAIL STORAGE ====================
-  
+  // ═══════════════════════════════════════════════════════════════════
+  // THUMBNAIL WORKER
+  // ═══════════════════════════════════════════════════════════════════
+
   /**
-   * Helper: Convert data URL to Blob (sync, no fetch needed)
+   * Get or create thumbnail worker
+   * 
+   * Web Workers run in a separate thread, keeping the main thread
+   * responsive during thumbnail generation.
+   */
+  function getWorker(): Worker | null {
+    if (!worker && browser) {
+      worker = new Worker(
+        new URL('$lib/workers/thumbnail.worker.ts', import.meta.url),
+        { type: 'module' }
+      );
+    }
+    return worker;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // DATA URL HELPERS
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Convert Blob to data URL for storage
+   * 
+   * IndexedDB stores data URLs more reliably than raw blobs
+   * across different browsers.
+   */
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * Convert data URL back to Blob
+   * 
+   * Used when storing in Cache API which prefers Blob format.
    */
   function dataUrlToBlob(dataUrl: string): Blob {
     const [header, base64] = dataUrl.split(',');
@@ -115,12 +243,20 @@ function createFotoFloStore() {
     return new Blob([array], { type: mime });
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // THUMBNAIL OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
   /**
-   * Save thumbnail - tries Cache API first, falls back to IndexedDB
+   * Save a thumbnail with tiered storage (Cache API → IndexedDB)
+   * 
+   * @param id - Photo ID to associate with thumbnail
+   * @param dataUrl - JPEG data URL of the thumbnail
    */
   async function saveThumbnail(id: string, dataUrl: string) {
     if (!browser) return;
     
+    // Try Cache API first (preferred)
     if (hasCacheAPI()) {
       try {
         const cache = await caches.open(CACHE_NAME);
@@ -130,10 +266,11 @@ function createFotoFloStore() {
         }));
         return;
       } catch (e) {
-        console.error('Cache API save error:', e);
+        // Fall through to IndexedDB
       }
     }
     
+    // Fallback to IndexedDB
     if (!db) await initDB();
     if (!db) return;
     
@@ -147,11 +284,15 @@ function createFotoFloStore() {
   }
 
   /**
-   * Get thumbnail - tries Cache API first, falls back to IndexedDB
+   * Get a thumbnail from tiered storage (Cache API → IndexedDB)
+   * 
+   * @param id - Photo ID to look up
+   * @returns Data URL string or null if not found
    */
   async function getThumbnail(id: string): Promise<string | null> {
     if (!browser) return null;
     
+    // Try Cache API first
     if (hasCacheAPI()) {
       try {
         const cache = await caches.open(CACHE_NAME);
@@ -160,9 +301,12 @@ function createFotoFloStore() {
           const blob = await response.blob();
           return await blobToDataUrl(blob);
         }
-      } catch (e) { /* fall through */ }
+      } catch (e) {
+        // Fall through to IndexedDB
+      }
     }
     
+    // Fallback to IndexedDB
     if (!db) await initDB();
     if (!db) return null;
     
@@ -176,7 +320,7 @@ function createFotoFloStore() {
   }
 
   /**
-   * Delete thumbnails from both Cache API and IndexedDB
+   * Delete thumbnails from both storage layers
    */
   async function deleteThumbnails(ids: string[]) {
     if (!browser) return;
@@ -191,7 +335,7 @@ function createFotoFloStore() {
       }
     }
     
-    // Also delete from IndexedDB
+    // Delete from IndexedDB
     if (!db) await initDB();
     if (!db) return;
     
@@ -203,21 +347,374 @@ function createFotoFloStore() {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // THUMBNAIL GENERATION
+  // ═══════════════════════════════════════════════════════════════════
+
   /**
-   * Helper: Convert blob to data URL
+   * Generate a thumbnail using Web Worker for performance
+   * 
+   * Uses a worker to keep the UI responsive during large imports.
+   * Falls back to main thread if worker fails.
+   * 
+   * @param id - Photo ID
+   * @param file - Original File object
    */
-  function blobToDataUrl(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+  async function generateThumbnail(id: string, file: File): Promise<void> {
+    if (!browser || !file || !(file instanceof File)) return;
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const w = getWorker();
+      if (!w) throw new Error('Worker not available');
+      
+      await new Promise<void>((resolve, reject) => {
+        const handler = (event: MessageEvent) => {
+          if (event.data.id === id) {
+            w.removeEventListener('message', handler);
+            if (event.data.success) {
+              saveThumbnail(id, event.data.dataUrl);
+              resolve();
+            } else {
+              reject(new Error(event.data.error));
+            }
+          }
+        };
+        
+        w.addEventListener('message', handler);
+        w.postMessage({
+          id,
+          fileData: arrayBuffer,
+          fileType: file.type,
+          maxSize: 300,
+          quality: 0.7
+        });
+        
+        // 30 second timeout
+        setTimeout(() => {
+          w.removeEventListener('message', handler);
+          reject(new Error('Thumbnail generation timeout'));
+        }, 30000);
+      });
+    } catch (err) {
+      console.warn('Worker failed, using main thread:', err);
+      await generateThumbnailMainThread(id, file);
+    }
   }
 
-  // ==================== FILE HANDLE STORAGE (IndexedDB only) ====================
+  /**
+   * Fallback: Generate thumbnail on main thread
+   */
+  async function generateThumbnailMainThread(id: string, file: File): Promise<void> {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const maxSize = 300;
+    const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
+    canvas.width = Math.floor(bitmap.width * scale);
+    canvas.height = Math.floor(bitmap.height * scale);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    
+    await saveThumbnail(id, canvas.toDataURL('image/jpeg', 0.7));
+  }
 
-  // File handle functions for full-res export
+  // ═══════════════════════════════════════════════════════════════════
+  // PHOTO OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Import photos into the library
+   * 
+   * Takes ImportedPhoto objects (with File references) and stores them
+   * as plain Photo objects in state.
+   * 
+   * @param photoFiles - Array of imported photos with File references
+   */
+  async function importPhotos(
+    photoFiles: Array<{
+      id: string;
+      fileName: string;
+      filePath: string;
+      dateTaken: string;
+      fileSize?: number;
+      file: File;
+      handle?: FileSystemFileHandle;
+      iso?: number;
+      aperture?: number;
+      shutterSpeed?: string;
+      lens?: string;
+      flash?: boolean;
+      whiteBalance?: string;
+    }>
+  ) {
+    // Transform to Photo interface (remove File reference)
+    const newPhotos = photoFiles.map(pf => ({
+      id: pf.id,
+      fileName: pf.fileName,
+      filePath: pf.filePath,
+      fileSize: pf.fileSize,
+      dateTaken: pf.dateTaken,
+      importedAt: new Date().toISOString(),
+      rating: 0,
+      isFavorite: false,
+      tags: [],
+      iso: pf.iso,
+      aperture: pf.aperture,
+      shutterSpeed: pf.shutterSpeed,
+      lens: pf.lens,
+      flash: pf.flash,
+      whiteBalance: pf.whiteBalance
+    }));
+    
+    // Add to state
+    state.photos = [...state.photos, ...newPhotos];
+    saveToStorage();
+    
+    // Store file handles for full-res export (folder imports only)
+    for (const pf of photoFiles) {
+      if (pf.handle) {
+        await saveFileHandle(pf.id, pf.handle);
+      }
+    }
+  }
+
+  /**
+   * Update photo metadata
+   */
+  function setRating(id: string, rating: number) {
+    const photo = state.photos.find(p => p.id === id);
+    if (photo) {
+      photo.rating = rating;
+      saveToStorage();
+    }
+  }
+
+  function toggleFavorite(id: string) {
+    const photo = state.photos.find(p => p.id === id);
+    if (photo) {
+      photo.isFavorite = !photo.isFavorite;
+      saveToStorage();
+    }
+  }
+
+  function deletePhotos(ids: string[]) {
+    const wasAllPhotos = state.photos.length === ids.length;
+    
+    state.photos = state.photos.filter(p => !ids.includes(p.id));
+    state.collections.forEach(c => {
+      c.photoIds = c.photoIds.filter(pid => !ids.includes(pid));
+    });
+    deleteThumbnails(ids);
+    deleteFileHandles(ids);
+    state.selectedIds = new Set([...state.selectedIds].filter(id => !ids.includes(id)));
+    
+    // Clear filters when deleting all
+    if (wasAllPhotos || state.photos.length === 0) {
+      state.filterFilmStock = null;
+      state.filterRating = null;
+      state.filterSubject = null;
+      state.activeView = 'all';
+      state.activeCollectionId = null;
+    }
+    
+    saveToStorage();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // SELECTION OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  function toggleSelection(id: string) {
+    if (state.selectedIds.has(id)) {
+      state.selectedIds.delete(id);
+    } else {
+      state.selectedIds.add(id);
+    }
+  }
+
+  function selectAll() {
+    const filtered = getFilteredPhotos();
+    state.selectedIds = new Set(filtered.map(p => p.id));
+  }
+
+  function clearSelection() {
+    state.selectedIds.clear();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // VIEW & FILTER OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  function setView(view: 'all' | 'favorites' | 'collection', collectionId?: string) {
+    state.activeView = view;
+    state.activeCollectionId = view === 'collection' ? collectionId || null : null;
+  }
+
+  function setSearch(query: string) {
+    state.searchQuery = query;
+  }
+
+  function setSortBy(sort: 'date' | 'rating' | 'name') {
+    state.sortBy = sort;
+  }
+
+  function setFilterFilmStock(filmStock: string | null) {
+    state.filterFilmStock = filmStock;
+  }
+
+  function setFilterCamera(camera: string | null) {
+    state.filterCamera = camera;
+  }
+
+  function setFilterRating(rating: number | null) {
+    state.filterRating = rating;
+  }
+
+  function setFilterSubject(subject: string | null) {
+    state.filterSubject = subject;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // DERIVED VALUES
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Get filtered and sorted photos based on current view and filters
+   */
+  function getFilteredPhotos(): Photo[] {
+    let result = [...state.photos];
+    
+    // Filter by view
+    if (state.activeView === 'favorites') {
+      result = result.filter(p => p.isFavorite);
+    } else if (state.activeView === 'collection' && state.activeCollectionId) {
+      const collection = state.collections.find(c => c.id === state.activeCollectionId);
+      if (collection) {
+        const idSet = new Set(collection.photoIds);
+        result = result.filter(p => idSet.has(p.id));
+      }
+    }
+    
+    // Filter by search query
+    if (state.searchQuery) {
+      const query = state.searchQuery.toLowerCase();
+      result = result.filter(p => 
+        p.fileName.toLowerCase().includes(query) ||
+        p.subject?.toLowerCase().includes(query) ||
+        p.filmStock?.toLowerCase().includes(query) ||
+        p.camera?.toLowerCase().includes(query)
+      );
+    }
+    
+    // Apply filters
+    if (state.filterFilmStock) {
+      result = result.filter(p => p.filmStock === state.filterFilmStock);
+    }
+    if (state.filterCamera) {
+      result = result.filter(p => p.camera === state.filterCamera);
+    }
+    if (state.filterRating !== null) {
+      result = result.filter(p => p.rating >= state.filterRating!);
+    }
+    if (state.filterSubject) {
+      result = result.filter(p => p.subject === state.filterSubject);
+    }
+    
+    // Sort
+    result.sort((a, b) => {
+      switch (state.sortBy) {
+        case 'rating':
+          return b.rating - a.rating;
+        case 'name':
+          return a.fileName.localeCompare(b.fileName);
+        case 'date':
+        default:
+          return new Date(b.dateTaken).getTime() - new Date(a.dateTaken).getTime();
+      }
+    });
+    
+    return result;
+  }
+
+  function getPhotoCount(): number {
+    return state.photos.length;
+  }
+
+  function getFilmStocks(): string[] {
+    const stocks = new Set(state.photos.map(p => p.filmStock).filter(Boolean));
+    return Array.from(stocks).sort();
+  }
+
+  function getCameras(): string[] {
+    const cameras = new Set(state.photos.map(p => p.camera).filter(Boolean));
+    return Array.from(cameras).sort();
+  }
+
+  function getSubjects(): string[] {
+    const subjects = new Set(state.photos.map(p => p.subject).filter(Boolean));
+    return Array.from(subjects).sort();
+  }
+
+  function getSelectionMode(): boolean {
+    return state.selectedIds.size > 0;
+  }
+
+  function getRatingDistribution(): Record<number, number> {
+    const dist: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const photo of state.photos) {
+      dist[photo.rating] = (dist[photo.rating] || 0) + 1;
+    }
+    return dist;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // COLLECTION OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  function createCollection(name: string, photoIds: string[]): string {
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    state.collections.push({
+      id,
+      name,
+      photoIds,
+      createdAt: new Date().toISOString()
+    });
+    saveToStorage();
+    return id;
+  }
+
+  function deleteCollection(id: string) {
+    state.collections = state.collections.filter(c => c.id !== id);
+    if (state.activeCollectionId === id) {
+      state.activeView = 'all';
+      state.activeCollectionId = null;
+    }
+    saveToStorage();
+  }
+
+  function addToCollection(collectionId: string, photoId: string) {
+    const collection = state.collections.find(c => c.id === collectionId);
+    if (collection && !collection.photoIds.includes(photoId)) {
+      collection.photoIds.push(photoId);
+      saveToStorage();
+    }
+  }
+
+  function removeFromCollection(collectionId: string, photoId: string) {
+    const collection = state.collections.find(c => c.id === collectionId);
+    if (collection) {
+      collection.photoIds = collection.photoIds.filter(id => id !== photoId);
+      saveToStorage();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // FILE HANDLE OPERATIONS (IndexedDB only)
+  // ═══════════════════════════════════════════════════════════════════
+
   async function saveFileHandle(id: string, handle: FileSystemFileHandle) {
     if (!browser) return;
     if (!db) await initDB();
@@ -227,11 +724,10 @@ function createFotoFloStore() {
       try {
         const transaction = db!.transaction([FILEHANDLE_STORE], 'readwrite');
         const store = transaction.objectStore(FILEHANDLE_STORE);
-        const request = store.put({ id, handle });
-        request.onsuccess = () => resolve();
-        request.onerror = () => resolve(); // Don't reject, just continue
+        store.put({ id, handle });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
       } catch (e) {
-        // Database connection issue - ignore silently
         resolve();
       }
     });
@@ -273,25 +769,11 @@ function createFotoFloStore() {
     });
   }
 
-  /**
-   * Get the original full-resolution file for export
-   * 
-   * Since we only store thumbnails for display, we need to
-   * re-read the original file when exporting. This function:
-   * 1. Gets the stored FileSystemFileHandle
-   * 2. Requests permission from the browser (user may need to approve)
-   * 3. Returns the File object for reading/writing
-   * 
-   * The File System Access API requires this two-step process
-   * for security - the browser won't let us access files without
-   * explicit user permission each session.
-   */
   async function getOriginalFile(id: string): Promise<File | null> {
     const handle = await getFileHandle(id);
     if (!handle) return null;
     
     try {
-      // Request permission to read (user may need to grant again)
       const permission = await handle.queryPermission({ mode: 'read' });
       if (permission !== 'granted') {
         const requested = await handle.requestPermission({ mode: 'read' });
@@ -304,402 +786,84 @@ function createFotoFloStore() {
     }
   }
 
-  // Persistence
-  function loadFromStorage() {
-    if (!browser) return;
-    try {
-      const stored = localStorage.getItem('fotoflo-photos');
-      if (stored) state.photos = JSON.parse(stored);
-      const coll = localStorage.getItem('fotoflo-collections');
-      if (coll) state.collections = JSON.parse(coll);
-    } catch (e) {
-      console.warn('Load failed:', e);
-    }
-  }
+  // ═══════════════════════════════════════════════════════════════════
+  // PERSISTENCE (LocalStorage)
+  // ═══════════════════════════════════════════════════════════════════
 
   function saveToStorage() {
     if (!browser) return;
-    localStorage.setItem('fotoflo-photos', JSON.stringify(state.photos));
-    localStorage.setItem('fotoflo-collections', JSON.stringify(state.collections));
+    try {
+      localStorage.setItem('fotoflo', JSON.stringify(state.photos));
+      localStorage.setItem('fotoflo-collections', JSON.stringify(state.collections));
+    } catch (e) {
+      console.warn('LocalStorage save failed:', e);
+    }
   }
 
-  // Actions
-  async function importPhotos(photoFiles: Photo[]) {
-    const newPhotos = photoFiles.map(pf => ({
-      id: pf.id,
-      fileName: pf.fileName,
-      filePath: pf.filePath,
-      fileSize: pf.fileSize,
-      dateTaken: pf.dateTaken,
-      importedAt: new Date().toISOString(),
-      rating: 0,
-      isFavorite: false,
-      tags: [],
-      iso: pf.iso,
-      aperture: pf.aperture,
-      shutterSpeed: pf.shutterSpeed,
-      lens: pf.lens,
-      flash: pf.flash,
-      whiteBalance: pf.whiteBalance
-    }));
-    state.photos = [...state.photos, ...newPhotos];
+  function loadFromStorage() {
+    if (!browser) return;
+    try {
+      const photos = localStorage.getItem('fotoflo');
+      const collections = localStorage.getItem('fotoflo-collections');
+      
+      if (photos) state.photos = JSON.parse(photos);
+      if (collections) state.collections = JSON.parse(collections);
+    } catch (e) {
+      console.warn('LocalStorage load failed:', e);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // METADATA BULK OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  function bulkRate(ids: string[], rating: number) {
+    state.photos = state.photos.map(p => 
+      ids.includes(p.id) ? { ...p, rating } : p
+    );
     saveToStorage();
-    
-    // Store file handles for full-res export
-    for (const pf of photoFiles) {
-      if ((pf as any).handle) {
-        await saveFileHandle(pf.id, (pf as any).handle);
-      }
-    }
   }
 
-  let worker: Worker | null = null;
-
-  /**
-   * Get or create thumbnail worker
-   */
-  function getWorker(): Worker {
-    if (!worker && browser) {
-      worker = new Worker(new URL('$lib/workers/thumbnail.worker.ts', import.meta.url), {
-        type: 'module'
-      });
-    }
-    return worker!;
+  function bulkSetMetadata(
+    ids: string[], 
+    metadata: { filmStock?: string; camera?: string; subject?: string }
+  ) {
+    state.photos = state.photos.map(p => 
+      ids.includes(p.id) 
+        ? { ...p, ...metadata }
+        : p
+    );
+    saveToStorage();
   }
 
-  /**
-   * Generate a compressed thumbnail for a photo (uses Web Worker for performance)
-   */
-  async function generateThumbnail(id: string, file: File): Promise<void> {
-    if (!browser || !file || !(file instanceof File)) return;
+  function applyBulkMetadata(
+    ids: string[], 
+    metadata: { filmStock: string; camera: string; subject: string }
+  ) {
+    bulkSetMetadata(ids, metadata);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // EXPORT OPERATIONS
+  // ═══════════════════════════════════════════════════════════════════
+
+  async function exportPhoto(photoId: string): Promise<File | null> {
+    const photo = state.photos.find(p => p.id === photoId);
+    if (!photo) return null;
     
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const worker = getWorker();
+      const file = await getOriginalFile(photoId);
+      if (!file) return null;
       
-      // Create a promise that resolves when the worker responds
-      await new Promise<void>((resolve, reject) => {
-        const handler = (event: MessageEvent) => {
-          if (event.data.id === id) {
-            worker.removeEventListener('message', handler);
-            if (event.data.success) {
-              saveThumbnail(id, event.data.dataUrl);
-              resolve();
-            } else {
-              reject(new Error(event.data.error));
-            }
-          }
-        };
-        
-        worker.addEventListener('message', handler);
-        worker.postMessage({
-          id,
-          fileData: arrayBuffer,
-          fileType: file.type,
-          maxSize: 300,
-          quality: 0.7
-        });
-        
-        // Timeout after 30 seconds
-        setTimeout(() => {
-          worker.removeEventListener('message', handler);
-          reject(new Error('Thumbnail generation timeout'));
-        }, 30000);
-      });
-    } catch (err) {
-      // Fallback to main thread generation
-      console.warn('Worker failed, falling back to main thread:', err);
-      await generateThumbnailMainThread(id, file);
+      // Write metadata to file
+      const exported = await writeEXIF(file, photo);
+      return exported;
+    } catch (e) {
+      console.error('Export failed:', e);
+      return null;
     }
   }
 
-  /**
-   * Fallback: main thread thumbnail generation
-   */
-  async function generateThumbnailMainThread(id: string, file: File): Promise<void> {
-    const bitmap = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const maxSize = 300;
-    const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height);
-    canvas.width = Math.floor(bitmap.width * scale);
-    canvas.height = Math.floor(bitmap.height * scale);
-    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    
-    await saveThumbnail(id, canvas.toDataURL('image/jpeg', 0.7));
-  }
-
-  function setRating(id: string, rating: number) {
-    const photo = state.photos.find(p => p.id === id);
-    if (photo) {
-      photo.rating = rating;
-      saveToStorage();
-    }
-  }
-
-  function toggleFavorite(id: string) {
-    const photo = state.photos.find(p => p.id === id);
-    if (photo) {
-      photo.isFavorite = !photo.isFavorite;
-      saveToStorage();
-    }
-  }
-
-  function deletePhotos(ids: string[]) {
-    const wasAllPhotos = state.photos.length === ids.length;
-    
-    state.photos = state.photos.filter(p => !ids.includes(p.id));
-    state.collections.forEach(c => {
-      c.photoIds = c.photoIds.filter(pid => !ids.includes(pid));
-    });
-    deleteThumbnails(ids);
-    deleteFileHandles(ids);
-    state.selectedIds = new Set([...state.selectedIds].filter(id => !ids.includes(id)));
-    
-    // Clear filters when all photos are deleted
-    if (wasAllPhotos || state.photos.length === 0) {
-      state.filterFilmStock = null;
-      state.filterRating = null;
-      state.filterSubject = null;
-      state.activeView = 'all';
-      state.activeCollectionId = null;
-    }
-    
-    saveToStorage();
-  }
-
-  function toggleSelection(id: string) {
-    if (state.selectedIds.has(id)) {
-      state.selectedIds.delete(id);
-    } else {
-      state.selectedIds.add(id);
-    }
-  }
-
-  function selectAll() {
-    const filtered = getFilteredPhotos();
-    state.selectedIds = new Set(filtered.map(p => p.id));
-  }
-
-  function clearSelection() {
-    state.selectedIds.clear();
-  }
-
-  function setView(view: 'all' | 'favorites' | 'collection', collectionId?: string) {
-    state.activeView = view;
-    state.activeCollectionId = view === 'collection' ? collectionId || null : null;
-  }
-
-  function setSearch(query: string) {
-    state.searchQuery = query;
-  }
-
-  function setSortBy(sort: 'date' | 'rating' | 'name') {
-    state.sortBy = sort;
-  }
-
-  function setFilterFilmStock(filmStock: string | null) {
-    state.filterFilmStock = filmStock;
-  }
-
-  function setFilterRating(rating: number | null) {
-    state.filterRating = rating;
-  }
-
-  function setFilterSubject(subject: string | null) {
-    state.filterSubject = subject;
-  }
-
-  function setFilterCamera(camera: string | null) {
-    state.filterCamera = camera;
-  }
-
-  // Derived
-  function getFilteredPhotos() {
-    let result = state.photos;
-
-    // View filter
-    if (state.activeView === 'favorites') {
-      result = result.filter(p => p.isFavorite);
-    } else if (state.activeView === 'collection' && state.activeCollectionId) {
-      const collection = state.collections.find(c => c.id === state.activeCollectionId);
-      if (collection) {
-        result = result.filter(p => collection.photoIds.includes(p.id));
-      }
-    }
-
-    // Film stock filter
-    if (state.filterFilmStock) {
-      result = result.filter(p => p.filmStock === state.filterFilmStock);
-    }
-
-    // Rating filter
-    if (state.filterRating !== null) {
-      result = result.filter(p => p.rating === state.filterRating);
-    }
-
-    // Subject filter
-    if (state.filterSubject) {
-      result = result.filter(p => p.subject === state.filterSubject);
-    }
-
-    // Camera filter
-    if (state.filterCamera) {
-      result = result.filter(p => p.camera === state.filterCamera);
-    }
-
-    // Search (includes metadata fields)
-    if (state.searchQuery) {
-      const q = state.searchQuery.toLowerCase();
-      result = result.filter(p =>
-        p.fileName.toLowerCase().includes(q) ||
-        p.tags.some(t => t.toLowerCase().includes(q)) ||
-        (p.filmStock && p.filmStock.toLowerCase().includes(q)) ||
-        (p.camera && p.camera.toLowerCase().includes(q)) ||
-        (p.subject && p.subject.toLowerCase().includes(q))
-      );
-    }
-
-    // Sort
-    switch (state.sortBy) {
-      case 'date':
-        result.sort((a, b) => new Date(b.dateTaken || b.importedAt).getTime() - new Date(a.dateTaken || a.importedAt).getTime());
-        break;
-      case 'rating':
-        result.sort((a, b) => b.rating - a.rating || new Date(b.importedAt).getTime() - new Date(a.importedAt).getTime());
-        break;
-      case 'name':
-        result.sort((a, b) => a.fileName.localeCompare(b.fileName));
-        break;
-    }
-    
-    return result;
-  }
-
-  function getPhotoCount() {
-    return state.photos.length;
-  }
-
-  function getFilmStocks() {
-    const stocks = new Set(state.photos.map(p => p.filmStock).filter(Boolean));
-    return Array.from(stocks).sort();
-  }
-
-  function getCameras() {
-    const cameras = new Set(state.photos.map(p => p.camera).filter(Boolean));
-    return Array.from(cameras).sort();
-  }
-
-  function getSubjects() {
-    const subjects = new Set(state.photos.map(p => p.subject).filter(Boolean));
-    return Array.from(subjects).sort();
-  }
-
-  function setFilmStock(id: string, filmStock: string) {
-    state.photos = state.photos.map(p => {
-      if (p.id === id) {
-        return { ...p, filmStock: filmStock || undefined };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  function setCamera(id: string, camera: string) {
-    state.photos = state.photos.map(p => {
-      if (p.id === id) {
-        return { ...p, camera: camera || undefined };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  function setSubject(id: string, subject: string) {
-    state.photos = state.photos.map(p => {
-      if (p.id === id) {
-        return { ...p, subject: subject || undefined };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  function setFrameNumber(id: string, frameNumber: string) {
-    state.photos = state.photos.map(p => {
-      if (p.id === id) {
-        return { ...p, frameNumber: frameNumber || undefined };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  function getSelectionMode() {
-    return state.selectedIds.size > 0;
-  }
-
-  function getRatingDistribution() {
-    const dist: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-    state.photos.forEach(p => {
-      dist[p.rating] = (dist[p.rating] || 0) + 1;
-    });
-    return dist;
-  }
-
-  function bulkRate(rating: number) {
-    const ids = Array.from(state.selectedIds);
-    state.photos = state.photos.map(p => {
-      if (ids.includes(p.id)) {
-        return { ...p, rating };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  function applyBulkMetadata(updates: {filmStock?: string; camera?: string; subject?: string}, targetIds?: string[]) {
-    const ids = targetIds || Array.from(state.selectedIds);
-    state.photos = state.photos.map(p => {
-      if (ids.includes(p.id)) {
-        return { ...p, ...updates };
-      }
-      return p;
-    });
-    saveToStorage();
-  }
-
-  // Relink original files by matching filenames from a selected folder
-  async function relinkOriginals(dirHandle: FileSystemDirectoryHandle): Promise<{linked: number; notFound: number}> {
-    let linked = 0;
-    let notFound = 0;
-    
-    // Build a map of filename -> file handle from the selected folder
-    const fileMap = new Map<string, FileSystemFileHandle>();
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file') {
-        fileMap.set(entry.name.toLowerCase(), entry as FileSystemFileHandle);
-      }
-    }
-    
-    // Try to match each photo by filename
-    for (const photo of state.photos) {
-      const handle = fileMap.get(photo.fileName.toLowerCase());
-      if (handle) {
-        await saveFileHandle(photo.id, handle);
-        linked++;
-      } else {
-        notFound++;
-      }
-    }
-    
-    return { linked, notFound };
-  }
-
-  // Export all metadata as JSON backup
   function exportBackup() {
     const backup = {
       version: 1,
@@ -717,7 +881,6 @@ function createFotoFloStore() {
     return JSON.stringify(backup, null, 2);
   }
 
-  // Import metadata from JSON backup
   function importBackup(json: string) {
     try {
       const backup = JSON.parse(json);
@@ -746,41 +909,68 @@ function createFotoFloStore() {
       });
       
       saveToStorage();
-      return { success: true, matched };
+      return matched;
     } catch (e) {
-      return { success: false, error: (e as Error).message };
+      console.error('Import backup failed:', e);
+      return 0;
     }
   }
 
-  /**
-   * Export a photo with embedded metadata
-   * Writes film stock, camera, subject, and rating into the EXIF data
-   */
-  async function exportPhoto(photoId: string): Promise<Blob | null> {
-    const photo = state.photos.find(p => p.id === photoId);
-    if (!photo) return null;
+  async function relinkOriginals(dirHandle: FileSystemDirectoryHandle): Promise<{linked: number; notFound: number}> {
+    let linked = 0;
+    let notFound = 0;
+    
+    const fileMap = new Map<string, FileSystemFileHandle>();
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file') {
+        fileMap.set(entry.name.toLowerCase(), entry as FileSystemFileHandle);
+      }
+    }
+    
+    for (const photo of state.photos) {
+      const handle = fileMap.get(photo.fileName.toLowerCase());
+      if (handle) {
+        await saveFileHandle(photo.id, handle);
+        linked++;
+      } else {
+        notFound++;
+      }
+    }
+    
+    return { linked, notFound };
+  }
 
-    try {
-      // Get original file
-      const file = await getOriginalFile(photoId);
-      if (!file) return null;
+  // ═══════════════════════════════════════════════════════════════════
+  // AUTO-LEARN CAMERAS & FILM STOCKS
+  // ═══════════════════════════════════════════════════════════════════
 
-      // Write metadata to file
-      const exported = await writeEXIF(file, photo);
-      return exported;
-    } catch (e) {
-      console.error('Export failed:', e);
-      return null;
+  function setCamera(camera: string) {
+    if (!state.filterCamera) {
+      state.filterCamera = camera;
     }
   }
 
-  // Initialize
+  function setFilmStock(filmStock: string) {
+    if (!state.filterFilmStock) {
+      state.filterFilmStock = filmStock;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // INITIALIZATION
+  // ═══════════════════════════════════════════════════════════════════
+
   if (browser) {
     loadFromStorage();
     initDB();
   }
 
+  // ═══════════════════════════════════════════════════════════════════
+  // STORE EXPORT
+  // ═══════════════════════════════════════════════════════════════════
+
   return {
+    // State accessors
     get state() { return state; },
     get filteredPhotos() { return getFilteredPhotos(); },
     getFilteredPhotos,
@@ -790,14 +980,30 @@ function createFotoFloStore() {
     get subjects() { return getSubjects(); },
     get selectionMode() { return getSelectionMode(); },
     get ratingDistribution() { return getRatingDistribution(); },
+    
+    // Import/Export
     importPhotos,
     generateThumbnail,
+    bulkRate,
+    applyBulkMetadata,
+    exportBackup,
+    importBackup,
+    exportPhoto,
+    relinkOriginals,
+    
+    // Photo operations
     setRating,
     toggleFavorite,
     deletePhotos,
+    setCamera,
+    setFilmStock,
+    
+    // Selection
     toggleSelection,
     selectAll,
     clearSelection,
+    
+    // View & Filter
     setView,
     setSearch,
     setSortBy,
@@ -805,19 +1011,18 @@ function createFotoFloStore() {
     setFilterCamera,
     setFilterRating,
     setFilterSubject,
+    
+    // Collections
+    createCollection,
+    deleteCollection,
+    addToCollection,
+    removeFromCollection,
+    
+    // Storage
     getThumbnail,
-    getOriginalFile,
-    setFilmStock,
-    setCamera,
-    setSubject,
-    setFrameNumber,
-    bulkRate,
-    applyBulkMetadata,
-    relinkOriginals,
-    exportBackup,
-    importBackup,
-    exportPhoto
+    getOriginalFile
   };
 }
 
+// Create and export the singleton store instance
 export const fotoflo = createFotoFloStore();

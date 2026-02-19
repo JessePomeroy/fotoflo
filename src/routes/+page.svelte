@@ -1,18 +1,42 @@
 <script lang="ts">
   /**
-   * FotoFlo Main Page
+   * ╔══════════════════════════════════════════════════════════════════════════╗
+   * ║                                                                    ║
+   * ║   FotoFlo Main Page                                                  ║
+   * ║   Single-page application entry point                            ║
+   * ║                                                                    ║
+   * ╚══════════════════════════════════════════════════════════════════════════╝
    * 
-   * This is the single-page application entry point. It coordinates:
-   * - The sidebar (filters and utilities)
-   * - The photo grid (main display)
+   * ════════════════════════════════════════════════════════════════════════
+   * ARCHITECTURE
+   * ════════════════════════════════════════════════════════════════════════
+   * 
+   * This page coordinates all UI components and handles:
+   * - The sidebar (filters, collections, utilities)
+   * - The photo grid (main display with thumbnails)
    * - The toolbar (actions for selected photos)
    * - The viewer (single photo detail view)
-   * - The store (all application data)
+   * - Import modals (file picker, folder picker)
+   * - Metadata modal (bulk editing)
    * 
-   * Key design patterns:
-   * - UI state (modals, selections) lives here in $state
-   * - Data state lives in the fotoflo store (shared)
-   * - Components communicate via callbacks (onXxx props)
+   * STATE SEPARATION:
+   * ┌─────────────────────────────────────────────────────────────────────┐
+   * │  UI STATE (this file)          │  DATA STATE (fotoflo store)       │
+   * │  - Modals open/closed         │  - Photos                        │
+   * │  - Selected photo              │  - Collections                    │
+   * │  - Loading states              │  - Filters                       │
+   * │  - Mobile UI state             │  - Selected IDs                   │
+   * └─────────────────────────────────────────────────────────────────────┘
+   * 
+   * WHY SEPARATE?
+   * - UI state changes frequently (open/close modals)
+   * - Data state is persisted (LocalStorage/IndexedDB)
+   * - Different update patterns (UI = local, Data = shared)
+   * 
+   * COMPONENT COMMUNICATION:
+   * - Parent (this file) → Child: Props and callbacks
+   * - Child → Parent: Events and callback props
+   * - Sibling components: Through the shared store
    */
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
