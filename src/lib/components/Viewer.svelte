@@ -100,6 +100,21 @@
     fotoflo.deletePhotos([photo.id]);
     onclose();
   }
+
+  async function exportWithMetadata() {
+    if (!photo) return;
+    const blob = await fotoflo.exportPhoto(photo.id);
+    if (!blob) {
+      alert('Export failed - could not read original file');
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = photo.fileName.replace(/\.[^/.]+$/, '') + '_metadata.jpg';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 </script>
 
 {#if mounted && photo && NeoDialog}
@@ -192,6 +207,51 @@
         </div>
 
         <button class="delete" onclick={deletePhoto}>delete photo</button>
+
+        <!-- EXIF Data Display -->
+        <div class="exif-section">
+          <h4>EXIF Data</h4>
+          <div class="exif-grid">
+            {#if photo.iso}
+              <div class="exif-item">
+                <span class="exif-label">ISO</span>
+                <span class="exif-value">{photo.iso}</span>
+              </div>
+            {/if}
+            {#if photo.aperture}
+              <div class="exif-item">
+                <span class="exif-label">f/</span>
+                <span class="exif-value">{photo.aperture}</span>
+              </div>
+            {/if}
+            {#if photo.shutterSpeed}
+              <div class="exif-item">
+                <span class="exif-label">Shutter</span>
+                <span class="exif-value">{photo.shutterSpeed}</span>
+              </div>
+            {/if}
+            {#if photo.lens}
+              <div class="exif-item full">
+                <span class="exif-label">Lens</span>
+                <span class="exif-value">{photo.lens}</span>
+              </div>
+            {/if}
+            {#if photo.whiteBalance}
+              <div class="exif-item">
+                <span class="exif-label">WB</span>
+                <span class="exif-value">{photo.whiteBalance}</span>
+              </div>
+            {/if}
+            {#if photo.flash !== undefined}
+              <div class="exif-item">
+                <span class="exif-label">Flash</span>
+                <span class="exif-value">{photo.flash ? 'Fired' : 'No Flash'}</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <button class="export" onclick={exportWithMetadata}>export with metadata</button>
       </div>
     </div>
     {/if}
@@ -506,6 +566,67 @@
 
   .delete:hover {
     background: #4A6572;
+  }
+
+  .export {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid rgba(93, 123, 140, 0.3);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.5);
+    color: #5D7B8C;
+    cursor: pointer;
+    margin-top: 8px;
+    font-weight: 500;
+  }
+
+  .export:hover {
+    background: rgba(255, 255, 255, 0.8);
+  }
+
+  .exif-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+  }
+
+  .exif-section h4 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #888;
+    margin-bottom: 12px;
+  }
+
+  .exif-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+
+  .exif-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 6px;
+  }
+
+  .exif-item.full {
+    grid-column: span 3;
+  }
+
+  .exif-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    color: #888;
+  }
+
+  .exif-value {
+    font-size: 0.85rem;
+    color: #2E3338;
+    font-weight: 500;
   }
 
   @media (max-width: 768px) {

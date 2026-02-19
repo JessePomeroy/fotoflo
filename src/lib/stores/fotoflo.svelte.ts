@@ -12,6 +12,7 @@
  * @module fotoflo
  */
 import { browser } from '$app/environment';
+import { writeEXIF } from '$lib/utils/exif';
 
 interface Photo {
   id: string;
@@ -27,6 +28,13 @@ interface Photo {
   camera?: string;
   subject?: string;
   frameNumber?: string;
+  // EXIF data
+  iso?: number;
+  aperture?: number;
+  shutterSpeed?: string;
+  lens?: string;
+  flash?: boolean;
+  whiteBalance?: string;
 }
 
 interface FotoFloState {
@@ -236,7 +244,7 @@ function createFotoFloStore() {
   }
 
   // Actions
-  async function importPhotos(photoFiles: Array<{id: string; fileName: string; filePath: string; dateTaken: string; fileSize?: number; file: File; handle?: FileSystemFileHandle}>) {
+  async function importPhotos(photoFiles: Array<{id: string; fileName: string; filePath: string; dateTaken: string; fileSize?: number; file: File; handle?: FileSystemFileHandle; iso?: number; aperture?: number; shutterSpeed?: string; lens?: string; flash?: boolean; whiteBalance?: string;}>) {
     const newPhotos = photoFiles.map(pf => ({
       id: pf.id,
       fileName: pf.fileName,
@@ -246,7 +254,13 @@ function createFotoFloStore() {
       importedAt: new Date().toISOString(),
       rating: 0,
       isFavorite: false,
-      tags: []
+      tags: [],
+      iso: pf.iso,
+      aperture: pf.aperture,
+      shutterSpeed: pf.shutterSpeed,
+      lens: pf.lens,
+      flash: pf.flash,
+      whiteBalance: pf.whiteBalance
     }));
     state.photos = [...state.photos, ...newPhotos];
     saveToStorage();
@@ -619,6 +633,28 @@ function createFotoFloStore() {
     }
   }
 
+  /**
+   * Export a photo with embedded metadata
+   * Writes film stock, camera, subject, and rating into the EXIF data
+   */
+  async function exportPhoto(photoId: string): Promise<Blob | null> {
+    const photo = state.photos.find(p => p.id === photoId);
+    if (!photo) return null;
+
+    try {
+      // Get original file
+      const file = await getOriginalFile(photoId);
+      if (!file) return null;
+
+      // Write metadata to file
+      const exported = await writeEXIF(file, photo);
+      return exported;
+    } catch (e) {
+      console.error('Export failed:', e);
+      return null;
+    }
+  }
+
   // Initialize
   if (browser) {
     loadFromStorage();
@@ -660,7 +696,8 @@ function createFotoFloStore() {
     applyBulkMetadata,
     relinkOriginals,
     exportBackup,
-    importBackup
+    importBackup,
+    exportPhoto
   };
 }
 

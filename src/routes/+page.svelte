@@ -135,7 +135,7 @@
   }
 
   async function processFiles(files: FileList) {
-    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File }[] = [];
+    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; iso?: number; aperture?: number; shutterSpeed?: string; lens?: string; flash?: boolean; whiteBalance?: string; }[] = [];
     const existingFiles = new Set(
       fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
     );
@@ -149,13 +149,41 @@
       const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
       
+      // Read EXIF data
+      let iso: number | undefined;
+      let aperture: number | undefined;
+      let shutterSpeed: string | undefined;
+      let lens: string | undefined;
+      let flash: boolean | undefined;
+      let whiteBalance: string | undefined;
+      
+      try {
+        const exif = await readEXIF(file);
+        if (exif?.dateTaken) dateTaken = exif.dateTaken;
+        if (exif?.camera) fotoflo.setCamera(exif.camera);
+        iso = exif?.iso;
+        aperture = exif?.aperture;
+        shutterSpeed = exif?.shutterSpeed;
+        lens = exif?.lens;
+        flash = exif?.flash;
+        whiteBalance = exif?.whiteBalance;
+      } catch (e) {
+        console.warn('EXIF read failed:', e);
+      }
+      
       newPhotos.push({
         id,
         fileName: file.name,
         filePath: file.name,
         fileSize: file.size,
         dateTaken,
-        file
+        file,
+        iso,
+        aperture,
+        shutterSpeed,
+        lens,
+        flash,
+        whiteBalance
       });
       existingFiles.add(key);
     }
@@ -199,12 +227,24 @@
         
         let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
         
-        // Try to read EXIF date
+        // Read EXIF data
+        let iso: number | undefined;
+        let aperture: number | undefined;
+        let shutterSpeed: string | undefined;
+        let lens: string | undefined;
+        let flash: boolean | undefined;
+        let whiteBalance: string | undefined;
+        
         try {
           const exif = await readEXIF(file);
-          if (exif?.dateTaken) {
-            dateTaken = exif.dateTaken;
-          }
+          if (exif?.dateTaken) dateTaken = exif.dateTaken;
+          if (exif?.camera) fotoflo.setCamera(exif.camera); // Auto-learn camera
+          iso = exif?.iso;
+          aperture = exif?.aperture;
+          shutterSpeed = exif?.shutterSpeed;
+          lens = exif?.lens;
+          flash = exif?.flash;
+          whiteBalance = exif?.whiteBalance;
         } catch (e) {
           console.warn('EXIF read failed:', e);
         }
@@ -216,7 +256,13 @@
           fileSize: file.size,
           dateTaken,
           file,
-          handle: entry as FileSystemFileHandle
+          handle: entry as FileSystemFileHandle,
+          iso,
+          aperture,
+          shutterSpeed,
+          lens,
+          flash,
+          whiteBalance
         });
         
         existingFiles.add(key);

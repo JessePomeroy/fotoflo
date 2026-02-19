@@ -1,109 +1,142 @@
 import type { Photo } from '$lib/stores/fotoflo.svelte';
+import ExifReader from 'exifreader';
 
 /**
- * Read EXIF metadata from a JPEG file
- * 
- * EXIF (Exchangeable Image File Format) stores metadata directly
- * in the image file - camera make/model, date taken, exposure settings, etc.
- * 
- * This parser handles the most useful fields for film photographers:
- * - Camera model (from IFD0)
- * - DateTimeOriginal (from EXIF IFD)
- * 
- * JPEG Structure (simplified):
- * - SOI (Start of Image): 0xFFD8
- * - APP1 (Application Segment 1): Contains EXIF/TIFF data
- * - Other markers (SOF, DQT, DHT, etc.)
- * - EOI (End of Image): 0xFFD9
- * 
- * @param file - The JPEG file to parse
- * @returns Partial Photo object with extracted EXIF data
+ * Read EXIF metadata from an image file
+ * Uses exifreader library for comprehensive EXIF/XMP/IPTC support
  */
 export async function readEXIF(file: File): Promise<Partial<Photo>> {
   const result: Partial<Photo> = {};
 
   try {
-    const buffer = await file.arrayBuffer();
-    const view = new DataView(buffer);
+    const tags = await ExifReader.load(file);
 
-    // Check for JPEG
-    if (view.getUint16(0) !== 0xFFD8) return result;
-
-    let offset = 2;
-    while (offset < buffer.byteLength - 2) {
-      const marker = view.getUint16(offset);
-
-      // APP1 marker (EXIF)
-      if (marker === 0xFFE1) {
-        const length = view.getUint16(offset + 2);
-        const exifData = new DataView(buffer, offset + 4, length - 2);
-
-        // Check for "Exif\0\0"
-        if (exifData.getUint32(0) === 0x45786966 && exifData.getUint16(4) === 0x0000) {
-          const tiff = new DataView(buffer, offset + 10);
-          const littleEndian = tiff.getUint16(0) === 0x4949;
-          const ifdOffset = tiff.getUint32(4, littleEndian);
-
-          // Read IFD0
-          const numTags = tiff.getUint16(ifdOffset, littleEndian);
-          for (let i = 0; i < numTags; i++) {
-            const tagOffset = ifdOffset + 2 + i * 12;
-            const tag = tiff.getUint16(tagOffset, littleEndian);
-
-            // Model (camera) - tag 0x0110
-            if (tag === 0x0110) {
-              const valueOffset = tiff.getUint32(tagOffset + 8, littleEndian);
-              const model = readString(tiff, valueOffset);
-              if (model) result.camera = model;
-            }
-          }
-
-          // Try to read EXIF IFD for date
-          const exifIFDOffset = tiff.getUint32(ifdOffset + 4, littleEndian);
-          if (exifIFDOffset) {
-            const exifNumTags = tiff.getUint16(exifIFDOffset, littleEndian);
-            for (let i = 0; i < exifNumTags; i++) {
-              const tagOffset = exifIFDOffset + 2 + i * 12;
-              const tag = tiff.getUint16(tagOffset, littleEndian);
-
-              // DateTimeOriginal - tag 0x9003
-              if (tag === 0x9003) {
-                const valueOffset = tiff.getUint32(tagOffset + 8, littleEndian);
-                const dateStr = readString(tiff, valueOffset);
-                if (dateStr) {
-                  // Parse "YYYY:MM:DD HH:MM:SS"
-                  const [date, time] = dateStr.split(' ');
-                  const [y, m, d] = date.split(':');
-                  const [h, min, s] = time.split(':');
-                  result.dateTaken = new Date(+y, +m - 1, +d, +h, +min, +s).toISOString();
-                }
-              }
-            }
-          }
-        }
-        break;
+    // Date taken
+    if (tags['DateTimeOriginal']) {
+      const dateStr = tags['DateTimeOriginal'].description;
+      if (dateStr && dateStr.includes(':')) {
+        // Format: "YYYY:MM:DD HH:MM:SS"
+        const [date, time] = dateStr.split(' ');
+        const [y, m, d] = date.split(':');
+        const [h, min, s] = time.split(':');
+        result.dateTaken = new Date(+y, +m - 1, +d, +h, +min, +s).toISOString();
       }
-
-      if ((marker & 0xFF00) !== 0xFF00) break;
-      offset += 2 + view.getUint16(offset + 2);
     }
+
+    // Camera
+    if (tags['Model']) {
+      result.camera = tags['Model'].description || tags['Model'].value;
+    }
+
+    // ISO
+    if (tags['ISOSpeedRatings']) {
+      result.iso = parseInt(tags['ISOSpeedRatings'].description || tags['ISOSpeedRatings'].value);
+    }
+
+    // Aperture (f-number)
+    if (tags['FNumber']) {
+      const val = tags['FNumber'].description || tags['FNumber'].value;
+      result.aperture = parseFloat(val);
+    }
+
+    // Shutter speed (exposure time)
+    if (tags['ExposureTime']) {
+      result.shutterSpeed = tags['ExposureTime'].description || String(tags['ExposureTime'].value);
+    }
+
+    // Lens model
+    if (tags['LensModel']) {
+      result.lens = tags['LensModel'].description || tags['LensModel'].value;
+    }
+
+    // Flash
+    if (tags['Flash']) {
+      const flashDesc = tags['Flash'].description || '';
+      result.flash = flashDesc.toLowerCase().includes('fired');
+    }
+
+    // White balance
+    if (tags['WhiteBalance']) {
+      result.whiteBalance = tags['WhiteBalance'].description || tags['WhiteBalance'].value;
+    }
+
   } catch (e) {
     // EXIF parsing failed, ignore
+    console.warn('EXIF read failed:', e);
   }
 
   return result;
 }
 
 /**
- * Read a null-terminated string from a DataView at the given offset
+ * Write EXIF metadata to a JPEG file
+ * Uses piexifjs to embed EXIF data into JPEGs
  */
-export function readString(view: DataView, offset: number): string {
-  try {
-    let end = offset;
-    while (view.getUint8(end) !== 0) end++;
-    const bytes = new Uint8Array(view.buffer, offset, end - offset);
-    return new TextDecoder().decode(bytes);
-  } catch {
-    return '';
+export async function writeEXIF(file: File, photo: Photo): Promise<Blob> {
+  const buffer = await file.arrayBuffer();
+  const base64 = arrayBufferToBase64(buffer);
+
+  // Build EXIF object
+  const exifObj: any = {
+    '0th': {},
+    'Exif': {},
+    'GPS': {},
+    '1st': {},
+    'thumbnail': null
+  };
+
+  // Camera
+  if (photo.camera) {
+    exifObj['0th'][piexif.ImageIFD.Make] = photo.camera.split(' ')[0] || '';
+    exifObj['0th'][piexif.ImageIFD.Model] = photo.camera;
   }
+
+  // Date taken
+  if (photo.dateTaken) {
+    const date = new Date(photo.dateTaken);
+    const exifDate = date.toISOString().replace(/[-:]/g, ':').split('.')[0];
+    exifObj['0th'][piexif.ImageIFD.DateTime] = exifDate;
+    exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] = exifDate;
+  }
+
+  // Film stock - write as ImageDescription or UserComment
+  if (photo.filmStock) {
+    exifObj['0th'][piexif.ImageIFD.ImageDescription] = photo.filmStock;
+  }
+
+  // Subject - write as XPComment or Artist
+  if (photo.subject) {
+    exifObj['0th'][piexif.ImageIFD.Artist] = photo.subject;
+  }
+
+  // Rating - XMP rating (piexif doesn't support XMP, so use Rating tag)
+  if (photo.rating > 0) {
+    exifObj['0th'][piexif.ImageIFD.Rating] = photo.rating;
+  }
+
+  // Insert EXIF into JPEG
+  const exifStr = piexif.dump(exifObj);
+  const newJpeg = piexif.insert(exifStr, base64);
+
+  return base64ToBlob(newJpeg, 'image/jpeg');
+}
+
+// Helper functions
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
 }
