@@ -38,6 +38,7 @@ interface FotoFloState {
   searchQuery: string;
   sortBy: 'date' | 'rating' | 'name';
   filterFilmStock: string | null;
+  filterCamera: string | null;
   filterRating: number | null;
   filterSubject: string | null;
 }
@@ -61,6 +62,7 @@ function createFotoFloStore() {
     searchQuery: '',
     sortBy: 'date',
     filterFilmStock: null,
+    filterCamera: null,
     filterRating: null,
     filterSubject: null
   };
@@ -378,6 +380,10 @@ function createFotoFloStore() {
     state.filterSubject = subject;
   }
 
+  function setFilterCamera(camera: string | null) {
+    state.filterCamera = camera;
+  }
+
   // Derived
   function getFilteredPhotos() {
     let result = state.photos;
@@ -405,6 +411,11 @@ function createFotoFloStore() {
     // Subject filter
     if (state.filterSubject) {
       result = result.filter(p => p.subject === state.filterSubject);
+    }
+
+    // Camera filter
+    if (state.filterCamera) {
+      result = result.filter(p => p.camera === state.filterCamera);
     }
 
     // Search (includes metadata fields)
@@ -636,6 +647,7 @@ function createFotoFloStore() {
     setSearch,
     setSortBy,
     setFilterFilmStock,
+    setFilterCamera,
     setFilterRating,
     setFilterSubject,
     getThumbnail,

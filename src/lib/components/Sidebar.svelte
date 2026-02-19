@@ -31,6 +31,7 @@
   let activeCollectionId = $state<string | null>(null);
   let filterRating = $state<number | null>(null);
   let activeFilmStock = $state<string | null>(null);
+  let activeCamera = $state<string | null>(null);
   let activeSubject = $state<string | null>(null);
   
   // Force refresh when trigger changes - just invalidate the derived values
@@ -56,13 +57,13 @@
   <nav>
     <button 
       class:active={fotoflo.state.activeView === 'all'} 
-      onclick={() => { activeCollectionId = null; activeFilmStock = null; activeSubject = null; fotoflo.setFilterFilmStock(null); fotoflo.setFilterSubject(null); fotoflo.setView('all'); onFilterChange?.(); }}
+      onclick={() => { activeCollectionId = null; activeFilmStock = null; activeCamera = null; activeSubject = null; fotoflo.setFilterFilmStock(null); fotoflo.setFilterCamera(null); fotoflo.setFilterSubject(null); fotoflo.setView('all'); onFilterChange?.(); }}
     >
       all photos
     </button>
     <button 
       class:active={fotoflo.state.activeView === 'favorites'} 
-      onclick={() => { activeCollectionId = null; activeSubject = null; fotoflo.setFilterSubject(null); fotoflo.setView('favorites'); onFilterChange?.(); }}
+      onclick={() => { activeCollectionId = null; activeCamera = null; activeSubject = null; fotoflo.setFilterCamera(null); fotoflo.setFilterSubject(null); fotoflo.setView('favorites'); onFilterChange?.(); }}
     >
       ♥ favorites
     </button>
@@ -104,8 +105,10 @@
             class:active={activeFilmStock === stock}
             onclick={() => { 
               activeFilmStock = activeFilmStock === stock ? null : stock;
+              activeCamera = null;
               activeSubject = null;
               fotoflo.setFilterFilmStock(activeFilmStock);
+              fotoflo.setFilterCamera(null);
               fotoflo.setFilterSubject(null);
               onFilterChange?.(); 
             }}
@@ -127,8 +130,23 @@
     {#if cameras.length > 0}
       <div class="film-stock-list">
         {#each cameras as cam}
-          <button class="film-stock-btn">
+          <button 
+            class="film-stock-btn"
+            class:active={activeCamera === cam}
+            onclick={() => { 
+              activeCamera = activeCamera === cam ? null : cam; 
+              activeFilmStock = null;
+              activeSubject = null;
+              fotoflo.setFilterCamera(activeCamera);
+              fotoflo.setFilterFilmStock(null);
+              fotoflo.setFilterSubject(null);
+              onFilterChange?.(); 
+            }}
+          >
             {cam}
+            {#if activeCamera === cam}
+              <span class="clear-x">×</span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -148,8 +166,10 @@
             onclick={() => { 
               activeSubject = activeSubject === subj ? null : subj; 
               activeFilmStock = null;
+              activeCamera = null;
               fotoflo.setFilterSubject(activeSubject);
               fotoflo.setFilterFilmStock(null);
+              fotoflo.setFilterCamera(null);
               onFilterChange?.(); 
             }}
           >

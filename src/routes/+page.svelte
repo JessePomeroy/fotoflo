@@ -532,6 +532,12 @@
           fotoflo.setFilterSubject(v.replace('subject:', ''));
           fotoflo.setFilterFilmStock(null);
           fotoflo.setFilterRating(null);
+        } else if (v.startsWith('camera:')) {
+          fotoflo.setView('all');
+          fotoflo.setFilterCamera(v.replace('camera:', ''));
+          fotoflo.setFilterFilmStock(null);
+          fotoflo.setFilterSubject(null);
+          fotoflo.setFilterRating(null);
         } else if (v.startsWith('rating:')) {
           fotoflo.setView('all');
           fotoflo.setFilterRating(parseInt(v.replace('rating:', '')));
@@ -550,6 +556,11 @@
         <optgroup label="subject">
           {#each fotoflo.subjects as subj}
             <option value="subject:{subj}">{subj}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="camera">
+          {#each fotoflo.cameras as cam}
+            <option value="camera:{cam}">{cam}</option>
           {/each}
         </optgroup>
         <optgroup label="rating">
