@@ -78,81 +78,135 @@ function createFotoFloStore() {
   let state = $state(initialState);
   let db: IDBDatabase | null = null;
   
-  // IndexedDB object store names
-  // We use separate stores for different types of binary data
-  const THUMBNAIL_STORE = 'thumbnails';     // Compressed image previews
-  const FILEHANDLE_STORE = 'filehandles';    // References to original files
+  // Storage constants
+  const CACHE_NAME = 'fotoflo-thumbnails-v1';
+  const THUMBNAIL_STORE = 'thumbnails';     // IndexedDB fallback
+  const FILEHANDLE_STORE = 'filehandles';   // File handles (IndexedDB only)
 
   /**
-   * Initialize IndexedDB for storing binary data
+   * Thumbnail Storage Strategy:
+   * 1. Cache API (primary) - Fast, designed for blob storage, good quota management
+   * 2. IndexedDB (fallback) - Universal support, stores as data URLs
    * 
-   * IndexedDB is a browser database that can store:
-   * - Binary files (blobs)
-   * - Structured data objects
-   * - File handles (in modern browsers)
-   * 
-   * We use it instead of LocalStorage because:
-   * 1. Can store much larger data (LocalStorage is limited to ~5MB)
-   * 2. Supports binary data natively
-   * 3. Non-blocking async operations
+   * Cache API is preferred because:
+   * - Native blob storage (no base64 encoding overhead)
+   * - Better performance for image data
+   * - Automatic quota management
+   * - Works great with service workers for offline
+   */
+
+  // Check if Cache API is available
+  function hasCacheAPI(): boolean {
+    return browser && 'caches' in window;
+  }
+
+  /**
+   * Initialize IndexedDB (used for file handles and as thumbnail fallback)
    */
   async function initDB() {
-    if (!browser || db) return;
+    if (db) return;
+    if (!browser) return Promise.resolve();
     
-    return new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open('FotoFlo', 2); // Bump version for new store
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => { db = request.result; resolve(); };
-      request.onupgradeneeded = (event: any) => {
-        const database = event.target.result;
-        if (!database.objectStoreNames.contains(THUMBNAIL_STORE)) {
-          database.createObjectStore(THUMBNAIL_STORE, { keyPath: 'id' });
+    return new Promise<void>((resolve) => {
+      try {
+        if (typeof indexedDB === 'undefined') {
+          console.warn('IndexedDB not available');
+          resolve();
+          return;
         }
-        if (!database.objectStoreNames.contains(FILEHANDLE_STORE)) {
-          database.createObjectStore(FILEHANDLE_STORE, { keyPath: 'id' });
-        }
-      };
+        
+        const request = indexedDB.open('FotoFlo', 2);
+        request.onerror = () => { console.warn('IndexedDB open error'); resolve(); };
+        request.onsuccess = () => { db = request.result; resolve(); };
+        request.onupgradeneeded = (event: any) => {
+          const database = event.target.result;
+          if (!database.objectStoreNames.contains(THUMBNAIL_STORE)) {
+            database.createObjectStore(THUMBNAIL_STORE, { keyPath: 'id' });
+          }
+          if (!database.objectStoreNames.contains(FILEHANDLE_STORE)) {
+            database.createObjectStore(FILEHANDLE_STORE, { keyPath: 'id' });
+          }
+        };
+      } catch (e) {
+        console.warn('IndexedDB init failed:', e);
+        resolve();
+      }
     });
   }
 
-  // Thumbnail functions - use Cache API first, fall back to IndexedDB
+  // ==================== THUMBNAIL STORAGE ====================
+  
+  /**
+   * Save thumbnail - tries Cache API first, falls back to IndexedDB
+   */
   async function saveThumbnail(id: string, dataUrl: string) {
-    // Try Cache API first (larger quota on most browsers)
-    try {
-      const cache = await caches.open('fotoflo-thumbnails');
-      await cache.put(`thumb-${id}`, new Response(dataUrl, { headers: { 'Content-Type': 'image/jpeg' } }));
-      return;
-    } catch (cacheErr) {
-      console.warn('Cache save failed, trying IndexedDB:', cacheErr);
+    if (!browser) return;
+    
+    // Try Cache API first (faster, better for blobs)
+    if (hasCacheAPI()) {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        // Convert data URL to blob for efficient storage
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        // Store as a fake URL that we can retrieve later
+        const url = `/thumbnails/${id}`;
+        await cache.put(url, new Response(blob, {
+          headers: { 'Content-Type': blob.type }
+        }));
+        console.log('Thumbnail saved (Cache API):', id, 'size:', blob.size);
+        return;
+      } catch (e) {
+        console.warn('Cache API save failed, falling back to IndexedDB:', e);
+      }
     }
-
-    // Fall back to IndexedDB
+    
+    // Fallback to IndexedDB
     if (!db) await initDB();
-    if (!db) return;
+    if (!db) {
+      console.warn('Cannot save thumbnail - no storage available');
+      return;
+    }
     
     return new Promise<void>((resolve) => {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readwrite');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.put({ id, data: dataUrl });
-      request.onsuccess = () => resolve();
-      request.onerror = () => { /* ignore quota errors */ resolve(); };
+      request.onsuccess = () => {
+        console.log('Thumbnail saved (IndexedDB):', id, 'length:', dataUrl?.length);
+        resolve();
+      };
+      request.onerror = () => {
+        console.warn('IndexedDB save failed:', id);
+        resolve();
+      };
     });
   }
 
+  /**
+   * Get thumbnail - tries Cache API first, falls back to IndexedDB
+   */
   async function getThumbnail(id: string): Promise<string | null> {
+    if (!browser) return null;
+    
     // Try Cache API first
-    try {
-      const cache = await caches.open('fotoflo-thumbnails');
-      const response = await cache.match(`thumb-${id}`);
-      if (response) {
-        const blob = await response.blob();
-        return await blob.text();
+    if (hasCacheAPI()) {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        const url = `/thumbnails/${id}`;
+        const response = await cache.match(url);
+        if (response) {
+          const blob = await response.blob();
+          const dataUrl = await blobToDataUrl(blob);
+          console.log('Thumbnail retrieved (Cache API):', id, 'size:', blob.size);
+          return dataUrl;
+        }
+      } catch (e) {
+        console.warn('Cache API get failed, trying IndexedDB:', e);
       }
-    } catch (cacheErr) {
-      // Continue to IndexedDB
     }
-
-    // Fall back to IndexedDB
+    
+    // Fallback to IndexedDB
     if (!db) await initDB();
     if (!db) return null;
     
@@ -160,23 +214,38 @@ function createFotoFloStore() {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readonly');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.get(id);
-      request.onsuccess = () => resolve(request.result?.data || null);
-      request.onerror = () => resolve(null);
+      request.onsuccess = () => {
+        const result = request.result?.data || null;
+        if (result) {
+          console.log('Thumbnail retrieved (IndexedDB):', id, 'length:', result?.length);
+        }
+        resolve(result);
+      };
+      request.onerror = () => {
+        console.warn('IndexedDB get failed:', id);
+        resolve(null);
+      };
     });
   }
 
+  /**
+   * Delete thumbnails from both Cache API and IndexedDB
+   */
   async function deleteThumbnails(ids: string[]) {
+    if (!browser) return;
+    
     // Delete from Cache API
-    try {
-      const cache = await caches.open('fotoflo-thumbnails');
-      for (const id of ids) {
-        await cache.delete(`thumb-${id}`);
+    if (hasCacheAPI()) {
+      try {
+        const cache = await caches.open(CACHE_NAME);
+        await Promise.all(ids.map(id => cache.delete(`/thumbnails/${id}`)));
+        console.log('Thumbnails deleted from Cache API:', ids.length);
+      } catch (e) {
+        console.warn('Cache API delete failed:', e);
       }
-    } catch (e) {
-      // Continue to IndexedDB
     }
-
-    // Delete from IndexedDB
+    
+    // Also delete from IndexedDB (in case they were stored there)
     if (!db) await initDB();
     if (!db) return;
     
@@ -184,12 +253,30 @@ function createFotoFloStore() {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readwrite');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       ids.forEach(id => store.delete(id));
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => {
+        console.log('Thumbnails deleted from IndexedDB:', ids.length);
+        resolve();
+      };
     });
   }
 
+  /**
+   * Helper: Convert blob to data URL
+   */
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // ==================== FILE HANDLE STORAGE (IndexedDB only) ====================
+
   // File handle functions for full-res export
   async function saveFileHandle(id: string, handle: FileSystemFileHandle) {
+    if (!browser) return;
     if (!db) await initDB();
     if (!db) return;
     
@@ -203,6 +290,7 @@ function createFotoFloStore() {
   }
 
   async function getFileHandle(id: string): Promise<FileSystemFileHandle | null> {
+    if (!browser) return null;
     if (!db) await initDB();
     if (!db) return null;
     

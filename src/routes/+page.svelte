@@ -30,7 +30,7 @@
     if (browser) {
       const mod = await import('@dvcol/neo-svelte');
       NeoDialog = mod.NeoDialog;
-      mounted = true;
+      ui.mounted = true;
     }
   });
 
@@ -69,18 +69,23 @@
   });
 
   async function loadAllThumbnails() {
+    console.log('Loading thumbnails for', photos.length, 'photos');
     const urls: Record<string, string> = {};
     for (const photo of photos) {
       const url = await fotoflo.getThumbnail(photo.id);
       if (url) {
+        console.log('Got thumbnail for:', photo.id);
         urls[photo.id] = url;
+      } else {
+        console.log('No thumbnail for:', photo.id);
       }
     }
     thumbnailUrls = urls;
+    console.log('Total thumbnails loaded:', Object.keys(urls).length);
   }
 
   async function updateFromStore() {
-    if (!mounted) return;
+    if (!ui.mounted) return;
     photos = [...fotoflo.filteredPhotos];
     photoCount = fotoflo.photoCount;
     selectedIds = new Set(fotoflo.state.selectedIds);
