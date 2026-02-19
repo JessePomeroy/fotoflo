@@ -82,88 +82,152 @@
    * Note: We store file handles in IndexedDB so we can re-export
    * with original quality. Handles are re-validated on each use.
    */
+  /**
+   * Main import function - tries folder first, falls back to files
+   * Works on both desktop (folder) and mobile (files)
+   */
   async function importPhotos() {
     if (!browser) return;
     
     try {
+      // Try folder picker first (desktop)
       const dirHandle = await (window as any).showDirectoryPicker();
-      const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; handle: FileSystemFileHandle }[] = [];
+      await importFromFolder(dirHandle);
+    } catch (e) {
+      // Fall back to file picker (mobile or Safari)
+      console.log('Using file picker instead');
+      await importFiles();
+    }
+  }
+
+  async function importFromFolder(dirHandle: any) {
+    const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; handle: FileSystemFileHandle }[] = [];
       
-      // Get existing files by name+size combo for better duplicate detection
+    // Get existing files by name+size combo for better duplicate detection
+    const existingFiles = new Set(
+      fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
+    );
+    let skippedCount = 0;
+
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file' && entry.name.match(/\.(jpg|jpeg|png|gif|webp|tiff?)$/i)) {
+        const file = await entry.getFile();
+        
+        // Check for duplicate by filename + file size
+        const key = `${entry.name.toLowerCase()}-${file.size}`;
+        if (existingFiles.has(key)) {
+          skippedCount++;
+          continue;
+        }
+        
+        const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        
+        let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+        
+        // Try to read EXIF date
+        try {
+          const exif = await readEXIF(file);
+          if (exif?.dateTaken) {
+            dateTaken = exif.dateTaken;
+          }
+        } catch (e) {
+          console.warn('EXIF read failed:', e);
+        }
+
+        newPhotos.push({
+          id,
+          fileName: entry.name,
+          filePath: entry.name,
+          fileSize: file.size,
+          dateTaken,
+          file,
+          handle: entry as FileSystemFileHandle
+        });
+        
+        existingFiles.add(key);
+      }
+    }
+
+    if (newPhotos.length > 0) {
+      fotoflo.importPhotos(newPhotos);
+      for (const photo of newPhotos) {
+        await fotoflo.generateThumbnail(photo.id, photo.file);
+      }
+      await updateFromStore();
+      await loadAllThumbnails();
+
+      if (newPhotos.length >= 5) {
+        bulkMetaIds = newPhotos.map(p => p.id);
+        showBulkMetaModal = true;
+      }
+    }
+    
+    if (skippedCount > 0) {
+      alert(`imported ${newPhotos.length} photos (skipped ${skippedCount} duplicates)`);
+    }
+  }
+
+  /**
+   * Import individual files using standard file input
+   * Works on mobile and desktop browsers
+   */
+  async function importFiles() {
+    if (!browser) return;
+    
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'image/*';
+    
+    input.onchange = async (e) => {
+      const files = (e.target as HTMLInputElement).files;
+      if (!files || files.length === 0) return;
+      
+      const newPhotos: { id: string; fileName: string; filePath: string; dateTaken: string; fileSize: number; file: File; handle?: FileSystemFileHandle }[] = [];
       const existingFiles = new Set(
         fotoflo.state.photos.map(p => `${p.fileName.toLowerCase()}-${p.fileSize || 0}`)
       );
-      let skippedCount = 0;
-
-      for await (const entry of dirHandle.values()) {
-        if (entry.kind === 'file' && entry.name.match(/\.(jpg|jpeg|png|gif|webp|tiff?)$/i)) {
-          const file = await entry.getFile();
-          
-          // Check for duplicate by filename + file size
-          const key = `${entry.name.toLowerCase()}-${file.size}`;
-          if (existingFiles.has(key)) {
-            skippedCount++;
-            continue;
-          }
-          
-          const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          
-          let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
-          
-          // Try to read EXIF date
-          try {
-            const exif = await readEXIF(file);
-            if (exif?.dateTaken) {
-              dateTaken = exif.dateTaken;
-            }
-          } catch (e) {
-            console.warn('EXIF read failed:', e);
-          }
-
-          newPhotos.push({
-            id,
-            fileName: entry.name,
-            filePath: entry.name,
-            fileSize: file.size,
-            dateTaken,
-            file,
-            handle: entry as FileSystemFileHandle // Store file handle for full-res export
-          });
-          
-          // Add to existing set to prevent duplicates within same import
-          existingFiles.add(key);
-        }
-      }
-
-      if (newPhotos.length > 0) {
-        // Import to store
-        fotoflo.importPhotos(newPhotos);
+      
+      for (const file of Array.from(files)) {
+        if (!file.type.match(/^image\/(jpeg|png|gif|webp|tiff?)$/i)) continue;
         
-        // Generate thumbnails
+        const key = `${file.name.toLowerCase()}-${file.size}`;
+        if (existingFiles.has(key)) continue;
+        
+        const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        let dateTaken = file.lastModified ? new Date(file.lastModified).toISOString() : new Date().toISOString();
+        
+        newPhotos.push({
+          id,
+          fileName: file.name,
+          filePath: file.name,
+          fileSize: file.size,
+          dateTaken,
+          file
+        });
+        existingFiles.add(key);
+      }
+      
+      if (newPhotos.length > 0) {
+        fotoflo.importPhotos(newPhotos);
         for (const photo of newPhotos) {
           await fotoflo.generateThumbnail(photo.id, photo.file);
         }
-
-        // Update local state from store and reload thumbnails
         await updateFromStore();
         await loadAllThumbnails();
-
-        // Show bulk metadata dialog if 5+ photos
+        
         if (newPhotos.length >= 5) {
           bulkMetaIds = newPhotos.map(p => p.id);
           showBulkMetaModal = true;
         }
+        
+        if (newPhotos.length < files.length) {
+          alert(`imported ${newPhotos.length} photos`);
+        }
       }
-      
-      // Show message if duplicates were skipped
-      if (skippedCount > 0) {
-        alert(`imported ${newPhotos.length} photos (skipped ${skippedCount} duplicates)`);
-      }
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') {
-        console.error('Import failed:', e);
-      }
-    }
+    };
+    
+    input.click();
   }
 
   function openViewer(photo: Photo) {
@@ -431,7 +495,7 @@
           <button class="btn" onclick={selectAll}>select all</button>
         {/if}
       {/if}
-      <button class="btn primary" onclick={importPhotos}>import photos</button>
+      <button class="btn primary" onclick={importPhotos}>import</button>
     </div>
   </header>
 
