@@ -873,5 +873,23 @@
     .content {
       padding: 12px;
     }
+
+    /* Touch-friendly tap targets */
+    button, 
+    .btn,
+    .actions button,
+    .toolbar button,
+    .toolbar select,
+    .star-btn,
+    .checkbox,
+    .favorite-btn,
+    .film-stock-btn {
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    input, select {
+      min-height: 44px;
+    }
   }
 </style>
