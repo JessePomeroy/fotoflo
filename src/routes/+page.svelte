@@ -917,8 +917,9 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -926,15 +927,15 @@
   }
 
   .modal {
-    background: rgba(255, 255, 255, 0.85);
-    backdrop-filter: blur(40px);
-    -webkit-backdrop-filter: blur(40px);
-    border-radius: 16px;
-    padding: 20px 24px;
-    min-width: 320px;
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-radius: 24px;
+    padding: 24px 28px;
+    min-width: 340px;
     max-width: 90vw;
     box-shadow: 0 32px 80px rgba(0, 0, 0, 0.15);
-    border: 1px solid rgba(200, 200, 200, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
   }
 
   .modal.compact {
@@ -972,10 +973,10 @@
   }
 
   .modal h2 {
-    font-size: 1.1rem;
+    font-size: 1.2rem;
     font-weight: 700;
     color: #1a1a1a;
-    margin-bottom: 12px;
+    margin-bottom: 20px;
     text-shadow: 0 1px 2px rgba(255,255,255,0.5);
   }
 
@@ -990,32 +991,33 @@
     display: flex;
     align-items: center;
     gap: 16px;
-    padding: 16px 20px;
-    background: rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(93, 123, 140, 0.2);
-    border-radius: 12px;
+    padding: 18px 24px;
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
   }
 
   .import-choice:hover {
-    background: rgba(255, 255, 255, 0.8);
-    border-color: rgba(93, 123, 140, 0.4);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.5);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
   }
 
   .import-choice .icon {
-    font-size: 1.5rem;
+    font-size: 1.8rem;
   }
 
   .import-choice span:last-child {
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: 500;
-    color: #2E3338;
+    color: #1a1a1a;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.5);
   }
 
   .export-choices {
@@ -1030,31 +1032,32 @@
     align-items: center;
     gap: 16px;
     padding: 16px 20px;
-    background: rgba(255, 255, 255, 0.5);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(93, 123, 140, 0.2);
-    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.3);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 16px;
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
   }
 
   .export-choice:hover {
-    background: rgba(255, 255, 255, 0.8);
-    border-color: rgba(93, 123, 140, 0.4);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    background: rgba(255, 255, 255, 0.5);
+    border-color: rgba(255, 255, 255, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
   }
 
   .export-choice .icon {
-    font-size: 1.5rem;
+    font-size: 1.8rem;
   }
 
   .export-choice span:last-child {
-    font-size: 1rem;
+    font-size: 1.1rem;
     font-weight: 500;
-    color: #2E3338;
+    color: #1a1a1a;
+    text-shadow: 0 1px 2px rgba(255,255,255,0.5);
   }
 
   .modal input {
@@ -1110,28 +1113,33 @@
   }
 
   .actions button {
-    padding: 8px 16px;
+    padding: 10px 20px;
     border: none;
-    border-radius: 8px;
-    background: rgba(93, 123, 140, 0.15);
-    color: #2E3338;
-    font-size: 0.85rem;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: #1a1a1a;
+    font-size: 0.9rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s ease;
+    border: 1px solid rgba(255, 255, 255, 0.2);
   }
 
   .actions button:hover {
-    background: rgba(93, 123, 140, 0.25);
+    background: rgba(255, 255, 255, 0.6);
+    transform: translateY(-1px);
   }
 
   .actions button.primary {
-    background: #5D7B8C;
+    background: rgba(93, 123, 140, 0.3);
     color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
   }
 
   .actions button.primary:hover {
-    background: #4A6572;
+    background: rgba(93, 123, 140, 0.5);
   }
 
   @media (max-width: 768px) {
