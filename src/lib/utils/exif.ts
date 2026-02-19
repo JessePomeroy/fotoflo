@@ -1,5 +1,6 @@
 import type { Photo } from '$lib/stores/fotoflo.svelte';
 import ExifReader from 'exifreader';
+import piexif from 'piexifjs';
 
 /**
  * Read EXIF metadata from an image file
