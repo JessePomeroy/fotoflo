@@ -328,4 +328,40 @@
     background: rgba(93, 123, 140, 0.15);
     color: #4A6572;
   }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    .grid {
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+      padding-bottom: 120px;
+    }
+    
+    .card {
+      border-radius: 12px;
+    }
+    
+    .info {
+      padding: 10px;
+    }
+    
+    .name {
+      font-size: 0.75rem;
+    }
+    
+    .stars {
+      font-size: 0.8rem;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+    
+    .info {
+      padding: 8px;
+    }
+  }
 </style>

@@ -29,6 +29,7 @@
   let showCollectionModal = $state(false);
   let showBulkMetaModal = $state(false);
   let viewerPhoto = $state<Photo | null>(null);
+  let mobileFilter = $state('all'); // 'all', 'favorites', or filtered view
 
   // Bulk metadata state
   let bulkFilmStock = $state('');
@@ -372,6 +373,56 @@
       </select>
     </div>
 
+    <div class="mobile-filters">
+      <select bind:value={mobileFilter} onchange={(e) => {
+        const v = e.currentTarget.value;
+        if (v === 'favorites') {
+          fotoflo.setView('favorites');
+        } else if (v === 'all') {
+          fotoflo.setView('all');
+          fotoflo.setFilterFilmStock(null);
+          fotoflo.setFilterRating(null);
+          fotoflo.setFilterSubject(null);
+        } else if (v.startsWith('film:')) {
+          fotoflo.setView('all');
+          fotoflo.setFilterFilmStock(v.replace('film:', ''));
+          fotoflo.setFilterRating(null);
+          fotoflo.setFilterSubject(null);
+        } else if (v.startsWith('subject:')) {
+          fotoflo.setView('all');
+          fotoflo.setFilterSubject(v.replace('subject:', ''));
+          fotoflo.setFilterFilmStock(null);
+          fotoflo.setFilterRating(null);
+        } else if (v.startsWith('rating:')) {
+          fotoflo.setView('all');
+          fotoflo.setFilterRating(parseInt(v.replace('rating:', '')));
+          fotoflo.setFilterFilmStock(null);
+          fotoflo.setFilterSubject(null);
+        }
+        updateFromStore();
+      }}>
+        <option value="all">all photos</option>
+        <option value="favorites">♥ favorites</option>
+        <optgroup label="film stock">
+          {#each fotoflo.filmStocks as stock}
+            <option value="film:{stock}">{stock}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="subject">
+          {#each fotoflo.subjects as subj}
+            <option value="subject:{subj}">{subj}</option>
+          {/each}
+        </optgroup>
+        <optgroup label="rating">
+          <option value="rating:5">★★★★★</option>
+          <option value="rating:4">★★★★☆</option>
+          <option value="rating:3">★★★☆☆</option>
+          <option value="rating:2">★★☆☆☆</option>
+          <option value="rating:1">★☆☆☆☆</option>
+        </optgroup>
+      </select>
+    </div>
+
     <div class="header-actions">
       {#if photos.length > 0}
         {#if selectedIds.size > 0}
@@ -525,6 +576,20 @@
     margin: 0 32px;
   }
 
+  .mobile-filters {
+    display: none;
+  }
+
+  .mobile-filters select {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: 1px solid rgba(93, 123, 140, 0.2);
+    background: rgba(255, 255, 255, 0.6);
+    color: #2E3338;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
   .center input {
     flex: 1;
     padding: 10px 16px;
@@ -576,6 +641,20 @@
     display: flex;
     flex: 1;
     overflow: hidden;
+  }
+
+  main :global(aside) {
+    display: block;
+  }
+
+  @media (max-width: 768px) {
+    main {
+      flex-direction: column;
+    }
+
+    main :global(aside) {
+      display: none;
+    }
   }
 
   .content {
@@ -733,13 +812,66 @@
       padding: 16px;
     }
 
+    .center {
+      margin: 0;
+      width: 100%;
+    }
+
+    .header-actions {
+      width: 100%;
+      justify-content: center;
+    }
+
+    .logo h1 {
+      font-size: 1.25rem;
+    }
+
+    .mobile-filters {
+      display: block;
+      width: 100%;
+    }
+
+    .mobile-filters select {
+      width: 100%;
+    }
+
     .content {
       padding: 16px;
     }
 
     .modal {
-      padding: 24px;
+      padding: 20px;
       min-width: 280px;
+      max-width: 95vw;
+    }
+
+    .modal.compact {
+      padding: 16px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    header {
+      padding: 12px;
+    }
+
+    .logo {
+      flex-direction: column;
+      gap: 4px;
+      align-items: center;
+    }
+
+    .center {
+      flex-direction: column;
+    }
+
+    .center input,
+    .center select {
+      width: 100%;
+    }
+
+    .content {
+      padding: 12px;
     }
   }
 </style>

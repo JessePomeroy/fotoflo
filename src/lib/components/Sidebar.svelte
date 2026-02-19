@@ -446,4 +446,41 @@
     background: rgba(93, 123, 140, 0.25);
     border-style: solid;
   }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    .sidebar {
+      width: 200px;
+      padding: 12px;
+    }
+    
+    .sidebar button {
+      padding: 10px 12px;
+      font-size: 0.8rem;
+    }
+    
+    .film-stock-list {
+      gap: 6px;
+    }
+    
+    .film-stock-btn {
+      padding: 5px 8px !important;
+      font-size: 0.7rem !important;
+    }
+  }
+
+  @media (max-width: 600px) {
+    .sidebar {
+      width: 160px;
+      padding: 10px;
+    }
+    
+    .sidebar h3 {
+      font-size: 0.65rem;
+    }
+    
+    .rating-dist .stars-display {
+      display: none;
+    }
+  }
 </style>

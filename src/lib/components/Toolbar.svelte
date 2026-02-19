@@ -137,4 +137,48 @@
     background: #4A6572;
     color: white;
   }
+
+  /* Mobile responsive */
+  @media (max-width: 768px) {
+    .toolbar {
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px;
+    }
+    
+    .count {
+      min-width: auto;
+      font-size: 0.85rem;
+    }
+    
+    .rating-buttons span {
+      display: none;
+    }
+    
+    .toolbar button,
+    .toolbar select {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+    }
+    
+    .toolbar select {
+      min-width: 140px;
+    }
+  }
+
+  @media (max-width: 480px) {
+    .toolbar {
+      justify-content: center;
+    }
+    
+    .rating-buttons {
+      display: none;
+    }
+    
+    .actions {
+      width: 100%;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+  }
 </style>
