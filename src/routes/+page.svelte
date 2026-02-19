@@ -1,4 +1,19 @@
 <script lang="ts">
+  /**
+   * FotoFlo Main Page
+   * 
+   * This is the single-page application entry point. It coordinates:
+   * - The sidebar (filters and utilities)
+   * - The photo grid (main display)
+   * - The toolbar (actions for selected photos)
+   * - The viewer (single photo detail view)
+   * - The store (all application data)
+   * 
+   * Key design patterns:
+   * - UI state (modals, selections) lives here in $state
+   * - Data state lives in the fotoflo store (shared)
+   * - Components communicate via callbacks (onXxx props)
+   */
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
@@ -54,7 +69,18 @@
     selectedIds = new Set(fotoflo.state.selectedIds);
   }
 
-  // Import photos using File System Access API
+  /**
+   * Import photos from a folder using the File System Access API
+   * 
+   * This is the main entry point for getting photos into the app.
+   * The File System Access API (browser-native) lets users:
+   * 1. Pick a folder (showDirectoryPicker)
+   * 2. Read files without uploading to a server
+   * 3. Get persistent handles for re-accessing files later
+   * 
+   * Note: We store file handles in IndexedDB so we can re-export
+   * with original quality. Handles are re-validated on each use.
+   */
   async function importPhotos() {
     if (!browser) return;
     
@@ -193,8 +219,19 @@
     updateFromStore();
   }
 
+  /**
+   * Export selected photos with metadata-based filenames
+   * 
+   * Uses the File System Access API to:
+   * 1. Let user pick destination folder
+   * 2. Try to get original full-res file (requests permission)
+   * 3. Fall back to thumbnail if original unavailable
+   * 4. Write with new filename based on metadata
+   * 
+   * Filename format: {filmStock}-{camera}-{subject}-{frame}.{ext}
+   * Example: portra400-leicam6-rollercoaster-001.jpg
+   */
   async function exportSelected() {
-    // Export renamed photos to a folder using File System Access API
     const selected = photos.filter(p => selectedIds.has(p.id));
     
     try {

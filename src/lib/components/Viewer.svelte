@@ -1,4 +1,19 @@
 <script lang="ts">
+  /**
+   * Viewer - Modal for viewing/editing a single photo
+   * 
+   * Features:
+   * - Large image display with navigation arrows
+   * - Editable metadata (film stock, camera, subject, frame)
+   * - Star rating
+   * - Favorite toggle
+   * - Delete photo
+   * - Keyboard navigation (arrow keys, escape)
+   * 
+   * Uses NeoDialog from neo-svelte for the modal overlay.
+   * Dynamically imports the neo-svelte components since they
+   * require the document to be present (SSR compatibility).
+   */
   import { onMount, onDestroy } from 'svelte';
   import { fotoflo } from '$lib/stores/fotoflo.svelte';
   import type { Photo } from '$lib/stores/fotoflo.svelte';

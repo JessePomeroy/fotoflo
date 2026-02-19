@@ -1,4 +1,16 @@
-// Simple Svelte store for FotoFlo data
+/**
+ * FotoFlo Store - The heart of the application
+ * 
+ * This store manages all application state using Svelte 5's reactive system ($state).
+ * It uses a dual-layer approach for data persistence:
+ * 
+ * 1. **LocalStorage**: Stores photo metadata (lightweight, fast access)
+ * 2. **IndexedDB**: Stores larger binary data (thumbnails, file handles)
+ * 
+ * This separation keeps LocalStorage fast while IndexedDB handles larger data.
+ * 
+ * @module fotoflo
+ */
 import { browser } from '$app/environment';
 
 interface Photo {
@@ -30,7 +42,16 @@ interface FotoFloState {
   filterSubject: string | null;
 }
 
+/**
+ * Creates the FotoFlo store with reactive state
+ * 
+ * Uses Svelte 5's $state() for reactivity - when state changes,
+ * any component using derived values will automatically update.
+ * 
+ * @returns {object} The store with getters and actions
+ */
 function createFotoFloStore() {
+  // Initial state - defines all possible state values
   const initialState: FotoFloState = {
     photos: [],
     collections: [],
@@ -46,10 +67,25 @@ function createFotoFloStore() {
 
   let state = $state(initialState);
   let db: IDBDatabase | null = null;
-  const THUMBNAIL_STORE = 'thumbnails';
-  const FILEHANDLE_STORE = 'filehandles';
+  
+  // IndexedDB object store names
+  // We use separate stores for different types of binary data
+  const THUMBNAIL_STORE = 'thumbnails';     // Compressed image previews
+  const FILEHANDLE_STORE = 'filehandles';    // References to original files
 
-  // Initialize IndexedDB
+  /**
+   * Initialize IndexedDB for storing binary data
+   * 
+   * IndexedDB is a browser database that can store:
+   * - Binary files (blobs)
+   * - Structured data objects
+   * - File handles (in modern browsers)
+   * 
+   * We use it instead of LocalStorage because:
+   * 1. Can store much larger data (LocalStorage is limited to ~5MB)
+   * 2. Supports binary data natively
+   * 3. Non-blocking async operations
+   */
   async function initDB() {
     if (!browser || db) return;
     
@@ -147,7 +183,19 @@ function createFotoFloStore() {
     });
   }
 
-  // Get original file from stored handle (requests permission if needed)
+  /**
+   * Get the original full-resolution file for export
+   * 
+   * Since we only store thumbnails for display, we need to
+   * re-read the original file when exporting. This function:
+   * 1. Gets the stored FileSystemFileHandle
+   * 2. Requests permission from the browser (user may need to approve)
+   * 3. Returns the File object for reading/writing
+   * 
+   * The File System Access API requires this two-step process
+   * for security - the browser won't let us access files without
+   * explicit user permission each session.
+   */
   async function getOriginalFile(id: string): Promise<File | null> {
     const handle = await getFileHandle(id);
     if (!handle) return null;
@@ -209,6 +257,19 @@ function createFotoFloStore() {
     }
   }
 
+  /**
+   * Generate a compressed thumbnail for a photo
+   * 
+   * This creates a small (300px max) JPEG preview that displays
+   * quickly in the grid. The original full-res image is stored
+   * as a file handle reference for export.
+   * 
+   * Uses canvas API to resize - createsImageBitmap() is faster
+   * than loading the full image into memory.
+   * 
+   * @param id - Photo ID to associate with thumbnail
+   * @param file - Original File object from import
+   */
   function generateThumbnail(id: string, file: File) {
     if (!browser) return Promise.resolve();
     

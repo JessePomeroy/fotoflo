@@ -1,4 +1,17 @@
 <script lang="ts">
+  /**
+   * PhotoGrid - Main display component for photo thumbnails
+   * 
+   * Renders a responsive grid of photo cards with:
+   * - Thumbnail image (from IndexedDB)
+   * - Filename
+   * - Star rating (clickable)
+   * - Favorite heart (clickable)
+   * - Metadata badges (film stock, camera, subject)
+   * 
+   * Uses CSS Grid for responsive layout - auto-fill with minmax
+   * means it adapts to any screen size without media queries.
+   */
   import type { Photo } from '$lib/stores/fotoflo.svelte';
   import { fotoflo } from '$lib/stores/fotoflo.svelte';
 

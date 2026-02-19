@@ -1,4 +1,18 @@
 <script lang="ts">
+  /**
+   * Toolbar - Bottom action bar for selected photos
+   * 
+   * Appears when photos are selected. Provides:
+   * - Selection count display
+   * - Quick rating (click stars to rate all selected)
+   * - Bulk metadata editing
+   * - Export selected
+   * - Delete selected
+   * - Clear selection
+   * 
+   * Actions are passed as callback props to keep this
+   * component purely presentational.
+   */
   import { fotoflo } from '$lib/stores/fotoflo.svelte';
 
   interface Props {

@@ -1,7 +1,23 @@
 import type { Photo } from '$lib/stores/fotoflo.svelte';
 
 /**
- * Read EXIF data from a JPEG file
+ * Read EXIF metadata from a JPEG file
+ * 
+ * EXIF (Exchangeable Image File Format) stores metadata directly
+ * in the image file - camera make/model, date taken, exposure settings, etc.
+ * 
+ * This parser handles the most useful fields for film photographers:
+ * - Camera model (from IFD0)
+ * - DateTimeOriginal (from EXIF IFD)
+ * 
+ * JPEG Structure (simplified):
+ * - SOI (Start of Image): 0xFFD8
+ * - APP1 (Application Segment 1): Contains EXIF/TIFF data
+ * - Other markers (SOF, DQT, DHT, etc.)
+ * - EOI (End of Image): 0xFFD9
+ * 
+ * @param file - The JPEG file to parse
+ * @returns Partial Photo object with extracted EXIF data
  */
 export async function readEXIF(file: File): Promise<Partial<Photo>> {
   const result: Partial<Photo> = {};

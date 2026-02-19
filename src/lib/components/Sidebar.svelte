@@ -1,4 +1,18 @@
 <script lang="ts">
+  /**
+   * Sidebar - Filter panel and utilities
+   * 
+   * Provides:
+   * - View toggles (all photos, favorites)
+   * - Rating distribution with click-to-filter
+   * - Film stock filter (clickable buttons)
+   * - Camera list (display only)
+   * - Subject filter (clickable buttons)
+   * - Utility functions (relink originals, backup/restore)
+   * 
+   * Uses $derived() for reactive data from the store -
+   * these automatically update when store state changes.
+   */
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { fotoflo } from '$lib/stores/fotoflo.svelte';
