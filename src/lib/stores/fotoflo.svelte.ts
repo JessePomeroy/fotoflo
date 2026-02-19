@@ -303,7 +303,11 @@ function createFotoFloStore() {
           ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
           
           const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-          await saveThumbnail(id, dataUrl);
+          try {
+            await saveThumbnail(id, dataUrl);
+          } catch (err) {
+            console.warn('Thumbnail save failed (quota exceeded?):', err);
+          }
         } catch (err) {
           console.warn('Thumbnail failed:', err);
         }
