@@ -115,34 +115,68 @@ function createFotoFloStore() {
     });
   }
 
-  // Thumbnail functions
+  // Thumbnail functions - use Cache API first, fall back to IndexedDB
   async function saveThumbnail(id: string, dataUrl: string) {
+    // Try Cache API first (larger quota on most browsers)
+    try {
+      const cache = await caches.open('fotoflo-thumbnails');
+      await cache.put(`thumb-${id}`, new Response(dataUrl, { headers: { 'Content-Type': 'image/jpeg' } }));
+      return;
+    } catch (cacheErr) {
+      console.warn('Cache save failed, trying IndexedDB:', cacheErr);
+    }
+
+    // Fall back to IndexedDB
     if (!db) await initDB();
     if (!db) return;
     
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<void>((resolve) => {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readwrite');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.put({ id, data: dataUrl });
       request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      request.onerror = () => { /* ignore quota errors */ resolve(); };
     });
   }
 
   async function getThumbnail(id: string): Promise<string | null> {
+    // Try Cache API first
+    try {
+      const cache = await caches.open('fotoflo-thumbnails');
+      const response = await cache.match(`thumb-${id}`);
+      if (response) {
+        const blob = await response.blob();
+        return await blob.text();
+      }
+    } catch (cacheErr) {
+      // Continue to IndexedDB
+    }
+
+    // Fall back to IndexedDB
     if (!db) await initDB();
     if (!db) return null;
     
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const transaction = db!.transaction([THUMBNAIL_STORE], 'readonly');
       const store = transaction.objectStore(THUMBNAIL_STORE);
       const request = store.get(id);
       request.onsuccess = () => resolve(request.result?.data || null);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => resolve(null);
     });
   }
 
   async function deleteThumbnails(ids: string[]) {
+    // Delete from Cache API
+    try {
+      const cache = await caches.open('fotoflo-thumbnails');
+      for (const id of ids) {
+        await cache.delete(`thumb-${id}`);
+      }
+    } catch (e) {
+      // Continue to IndexedDB
+    }
+
+    // Delete from IndexedDB
     if (!db) await initDB();
     if (!db) return;
     
