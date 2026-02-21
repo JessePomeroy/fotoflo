@@ -259,6 +259,7 @@
       const files = (e.target as HTMLInputElement).files;
       if (!files || files.length === 0) return;
       
+      ui.importing = true;
       const existingKeys = getExistingFileKeys(fotoflo.state.photos);
       const newPhotos = await importFilesApi(files, existingKeys);
       
@@ -273,6 +274,7 @@
           ui.showBulkMetaModal = true;
         }
       }
+      ui.importing = false;
     };
     
     input.click();
